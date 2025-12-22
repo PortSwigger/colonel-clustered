@@ -1,0 +1,14 @@
+# Gradle cache
+.gradle/
+build/
+
+# Python virtual environment
+test_server/bin/
+test_server/include/
+test_server/lib/
+test_server/lib64/
+test_server/pyvenv.cfg
+
+# Python bytecode
+__pycache__/
+*.pyc
