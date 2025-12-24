@@ -55,9 +55,21 @@ public class ClusteringEngine {
 
         // 3. Automated Epsilon Tuning
         progressCallback.accept("Step 3/4: Automatically determining optimal epsilon...");
-        int minPts = 4;
+        
+        // Adapt minPts based on the size of the dataset. ln(N) is a good heuristic.
+        // We use a minimum of 2 for very small datasets.
+        int minPts = Math.max(2, (int) Math.log(projectedDataArray.length));
+        
         double epsilon = findOptimalEpsilon(projectedDataArray, minPts);
-        progressCallback.accept("Found optimal epsilon: " + String.format("%.4f", epsilon));
+        
+        // If all points are identical, epsilon can be 0.0, which is an invalid radius for DBSCAN.
+        // Fallback to a small default value in this case.
+        if (epsilon == 0.0) {
+            epsilon = 0.1;
+            progressCallback.accept("Optimal epsilon was 0.0; falling back to " + epsilon + " with minPts: " + minPts);
+        } else {
+            progressCallback.accept("Found optimal epsilon: " + String.format("%.4f", epsilon) + " with minPts: " + minPts);
+        }
 
         // 4. DBSCAN
         progressCallback.accept("Step 4/4: Clustering with DBSCAN...");

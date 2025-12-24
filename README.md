@@ -12,11 +12,14 @@ Colonel Clustered solves this by analyzing the entire content of every response 
 
 - **Content-Based Clustering**: Uses a TF-IDF -> PCA -> DBSCAN pipeline to cluster responses based on their content, not just metadata.
 - **Outlier Detection**: The primary goal is to isolate unique or rare responses, which often represent interesting application behavior.
-- **Automatic Tuning**: Automatically determines the optimal `epsilon` value for the DBSCAN algorithm based on your specific dataset, eliminating the need for manual tuning.
+- **Automatic Parameter Tuning**: Automatically determines the optimal parameters for the DBSCAN algorithm based on your specific dataset:
+    - **Adaptive `minPts`**: The `minPts` parameter (the minimum number of points to form a dense region) is calculated as the natural logarithm of your dataset size. This makes the clustering robust for both small and very large sets of requests.
+    - **Optimal `epsilon`**: The `epsilon` parameter (the maximum distance between two samples for one to be considered as in the neighborhood of the other) is found by analyzing the "knee" of the k-distance graph. This eliminates the need for manual, trial-and-error tuning.
 - **Universal Integration**: Works from the context menu of any Burp tool that handles HTTP requests/responses, including Proxy history, Repeater, and Intruder (including Turbo Intruder).
-- **Interactive UI**:
+- **Interactive & Scalable UI**:
     - Displays clusters and their member counts in a hierarchical tree.
-    - Visually distinguishes cluster groups for clarity.
+    - **Collapsible Groups**: Cluster groups are collapsed by default, making it easy to navigate even with thousands of requests.
+    - **Visually Nested Structure**: Parent cluster nodes are larger and styled differently to clearly distinguish them from the child request nodes, creating an intuitive nested appearance.
     - Integrates Burp's native request/response viewers for familiar analysis.
     - Click any request in the tree to see its full request and response.
 

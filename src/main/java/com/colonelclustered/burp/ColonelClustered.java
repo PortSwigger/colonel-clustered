@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 public class ColonelClustered implements BurpExtension, ContextMenuItemsProvider {
@@ -184,11 +185,19 @@ class ColonelClusteredTab extends JPanel {
             @Override
             protected void done() {
                 try {
+                    api.logging().logToOutput("Clustering complete. Entering done() method.");
                     Map<Integer, List<HttpRequestResponse>> result = get();
+                    api.logging().logToOutput("Result received with " + result.size() + " clusters.");
+                    
                     displayResults(result);
+                    api.logging().logToOutput("displayResults() method completed.");
+
                     cardLayout.show(mainPanel, "results");
+                    api.logging().logToOutput("Switched to results panel.");
+
                 } catch (InterruptedException | ExecutionException e) {
                     api.logging().logToError(e);
+                    api.logging().logToOutput("Error during clustering: " + e.getMessage());
                     statusLabel.setText("Error during clustering: " + e.getMessage());
                 }
             }
@@ -199,6 +208,7 @@ class ColonelClusteredTab extends JPanel {
     private void displayResults(Map<Integer, List<HttpRequestResponse>> clusteredResponses) {
         DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Clustering Results (" + clusteredResponses.values().stream().mapToInt(List::size).sum() + " total items)");
 
+        AtomicInteger requestCounter = new AtomicInteger(0);
         clusteredResponses.entrySet().stream()
             .sorted(Map.Entry.comparingByKey())
             .forEach(entry -> {
@@ -210,7 +220,8 @@ class ColonelClusteredTab extends JPanel {
                 DefaultMutableTreeNode clusterNode = new DefaultMutableTreeNode(nodeText);
                 
                 for (HttpRequestResponse reqResp : responsesInCluster) {
-                    RequestResponseNode nodeObject = new RequestResponseNode(reqResp);
+                    // Use the counter for a generic, sequential label
+                    RequestResponseNode nodeObject = new RequestResponseNode(reqResp, requestCounter.getAndIncrement());
                     DefaultMutableTreeNode requestNode = new DefaultMutableTreeNode(nodeObject);
                     clusterNode.add(requestNode);
                 }
@@ -218,47 +229,74 @@ class ColonelClusteredTab extends JPanel {
             });
         
         treeModel.setRoot(rootNode);
-        for (int i = 0; i < clusterTree.getRowCount(); i++) {
-            clusterTree.expandRow(i);
-        }
+
+        // Schedule collapsing on the AWT Event Dispatch Thread
+        SwingUtilities.invokeLater(() -> {
+            for (int i = 0; i < rootNode.getChildCount(); i++) {
+                clusterTree.collapsePath(clusterTree.getPathForRow(i));
+            }
+        });
     }
 }
 
 class RequestResponseNode {
     private final HttpRequestResponse requestResponse;
-    public RequestResponseNode(HttpRequestResponse requestResponse) { this.requestResponse = requestResponse; }
-    public HttpRequestResponse getRequestResponse() { return requestResponse; }
+    private final int requestIndex;
+
+    public RequestResponseNode(HttpRequestResponse requestResponse, int requestIndex) {
+        this.requestResponse = requestResponse;
+        this.requestIndex = requestIndex;
+    }
+
+    public HttpRequestResponse getRequestResponse() {
+        return requestResponse;
+    }
+
     @Override
     public String toString() {
-        String notes = requestResponse.annotations().notes();
-        return (notes != null && !notes.isEmpty()) ? "Payload: " + notes : requestResponse.request().url();
+        // Return a generic, sequential identifier
+        return "Request " + requestIndex;
     }
 }
 
 class ClusterTreeCellRenderer extends DefaultTreeCellRenderer {
     private Font defaultFont;
     private Font boldFont;
-    private Color defaultBackground;
-    private Color clusterBackground;
 
     @Override
     public Component getTreeCellRendererComponent(JTree tree, Object value, boolean sel, boolean expanded, boolean leaf, int row, boolean hasFocus) {
         super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus);
+
+        // Lazy initialization is safer than initializing in the constructor
         if (boldFont == null) {
             defaultFont = getFont();
+            if (defaultFont == null) { // Defensive check
+                defaultFont = new Font("SansSerif", Font.PLAIN, 12);
+            }
             boldFont = new Font(defaultFont.getName(), Font.BOLD, defaultFont.getSize() + 2);
-            defaultBackground = getBackgroundNonSelectionColor();
-            clusterBackground = new Color(220, 220, 255);
         }
 
+        // Restore default expand/collapse icons
+        if (!leaf) {
+            if (expanded) {
+                setIcon(UIManager.getIcon("Tree.expandedIcon"));
+            } else {
+                setIcon(UIManager.getIcon("Tree.collapsedIcon"));
+            }
+        } else {
+            setIcon(null);
+        }
+
+        // Apply custom styling only to the top-level cluster nodes
         if (value instanceof DefaultMutableTreeNode) {
             DefaultMutableTreeNode node = (DefaultMutableTreeNode) value;
             if (node.getParent() == tree.getModel().getRoot() && node.getChildCount() > 0) {
                 setFont(boldFont);
-                setBackgroundNonSelectionColor(clusterBackground);
+                setBackgroundNonSelectionColor(new Color(235, 235, 255)); // Lighter background
             } else {
                 setFont(defaultFont);
-                setBackgroundNonSelectionColor(defaultBackground);
+                // Use the default L&F color for child nodes
+                setBackgroundNonSelectionColor(UIManager.getColor("Tree.background"));
             }
         }
         return this;
