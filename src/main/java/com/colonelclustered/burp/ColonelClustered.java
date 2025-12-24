@@ -37,7 +37,7 @@ public class ColonelClustered implements BurpExtension, ContextMenuItemsProvider
         api.logging().logToOutput("Colonel Clustered loaded.");
 
         colonelClusteredTab = new ColonelClusteredTab(api);
-        api.userInterface().registerSuiteTab("Colonel Clustered", colonelClusteredTab);
+        api.userInterface().registerSuiteTab("Col. Clustered", colonelClusteredTab);
         api.userInterface().registerContextMenuItemsProvider(this);
     }
 
@@ -66,6 +66,7 @@ class ColonelClusteredTab extends JPanel {
     private final HttpResponseEditor responseViewer;
     private final CardLayout cardLayout;
     private final JPanel mainPanel;
+    private final JLabel resultsLabel; // Label for the results count
 
     public ColonelClusteredTab(MontoyaApi api) {
         this.api = api;
@@ -87,9 +88,10 @@ class ColonelClusteredTab extends JPanel {
         JSplitPane viewersSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, requestViewer.uiComponent(), responseViewer.uiComponent());
         viewersSplitPane.setResizeWeight(0.5);
         
-        DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("No analysis run yet.");
+        DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Root");
         treeModel = new DefaultTreeModel(rootNode);
         clusterTree = new JTree(treeModel);
+        clusterTree.setRootVisible(false); // Do not show the root node
         clusterTree.setCellRenderer(new ClusterTreeCellRenderer());
         clusterTree.addTreeSelectionListener(e -> {
             Object lastPathComponent = e.getPath().getLastPathComponent();
@@ -97,6 +99,7 @@ class ColonelClusteredTab extends JPanel {
                 DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) lastPathComponent;
                 Object userObject = selectedNode.getUserObject();
                 if (userObject instanceof RequestResponseNode) {
+                    // Use the HttpRequestResponse from the RequestResponseNode
                     HttpRequestResponse selectedRequestResponse = ((RequestResponseNode) userObject).getRequestResponse();
                     requestViewer.setRequest(selectedRequestResponse.request());
                     responseViewer.setResponse(selectedRequestResponse.response());
@@ -105,7 +108,14 @@ class ColonelClusteredTab extends JPanel {
         });
         JScrollPane treeScrollPane = new JScrollPane(clusterTree);
 
-        JSplitPane mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, treeScrollPane, viewersSplitPane);
+        // Panel to hold the results label and the tree
+        JPanel treePanel = new JPanel(new BorderLayout());
+        resultsLabel = new JLabel("No analysis run yet.", SwingConstants.CENTER);
+        resultsLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+        treePanel.add(resultsLabel, BorderLayout.NORTH);
+        treePanel.add(treeScrollPane, BorderLayout.CENTER);
+
+        JSplitPane mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, treePanel, viewersSplitPane);
         mainSplitPane.setResizeWeight(0.3);
         resultsPanel.add(mainSplitPane, BorderLayout.CENTER);
         
@@ -128,7 +138,8 @@ class ColonelClusteredTab extends JPanel {
     }
 
     private void clearResults() {
-        treeModel.setRoot(new DefaultMutableTreeNode("Results cleared."));
+        treeModel.setRoot(new DefaultMutableTreeNode("Root"));
+        resultsLabel.setText("Results cleared.");
         requestViewer.setRequest(null);
         responseViewer.setResponse(null);
         cardLayout.show(mainPanel, "status");
@@ -137,15 +148,13 @@ class ColonelClusteredTab extends JPanel {
     private void showAboutDialog() {
         String htmlContent = "<html><body style='width: 300px; padding: 10px;'>"
             + "<h1>Colonel Clustered</h1>"
+            + "<p><b>Version:</b> 1.0.0</p>"
             + "<p>A Burp Suite extension for clustering HTTP responses to find outliers.</p>"
             + "<hr>"
             + "<h3>Author</h3>"
             + "<p><b>Drew Kirkpatrick</b><br>"
             + "<b>Twitter:</b> @hoodoer<br>"
             + "<b>Email:</b> hoodoer@bitwisemunitions.dev</p>"
-            + "<h3>Consulting</h3>"
-            + "<p>Professional security services provided by TrustedSec.</p>"
-            + "<p><a href='https://www.trustedsec.com'>www.trustedsec.com</a></p>"
             + "</body></html>";
 
         JEditorPane editorPane = new JEditorPane("text/html", htmlContent);
@@ -171,9 +180,9 @@ class ColonelClusteredTab extends JPanel {
         JLabel statusLabel = (JLabel) statusPanel.getComponent(0);
         statusLabel.setText("Starting clustering for " + requestResponses.size() + " items...");
 
-        SwingWorker<Map<Integer, List<HttpRequestResponse>>, String> worker = new SwingWorker<>() {
+        SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> worker = new SwingWorker<>() {
             @Override
-            protected Map<Integer, List<HttpRequestResponse>> doInBackground() {
+            protected Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> doInBackground() {
                 return clusteringEngine.clusterResponses(requestResponses, api, this::publish);
             }
             
@@ -186,7 +195,7 @@ class ColonelClusteredTab extends JPanel {
             protected void done() {
                 try {
                     api.logging().logToOutput("Clustering complete. Entering done() method.");
-                    Map<Integer, List<HttpRequestResponse>> result = get();
+                    Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> result = get();
                     api.logging().logToOutput("Result received with " + result.size() + " clusters.");
                     
                     displayResults(result);
@@ -205,23 +214,25 @@ class ColonelClusteredTab extends JPanel {
         worker.execute();
     }
 
-    private void displayResults(Map<Integer, List<HttpRequestResponse>> clusteredResponses) {
-        DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Clustering Results (" + clusteredResponses.values().stream().mapToInt(List::size).sum() + " total items)");
+    private void displayResults(Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> clusteredResponses) {
+        DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Root");
 
-        AtomicInteger requestCounter = new AtomicInteger(0);
+        long totalItems = clusteredResponses.values().stream().mapToLong(List::size).sum();
+        resultsLabel.setText("Clustering Results (" + totalItems + " total items)");
+
         clusteredResponses.entrySet().stream()
             .sorted(Map.Entry.comparingByKey())
             .forEach(entry -> {
                 int clusterId = entry.getKey();
-                List<HttpRequestResponse> responsesInCluster = entry.getValue();
+                List<ClusteringEngine.IndexedHttpRequestResponse> responsesInCluster = entry.getValue();
                 String nodeText = (clusterId == PartitionClustering.OUTLIER ? "Outliers" : "Cluster " + clusterId)
                                   + " (" + responsesInCluster.size() + " items)";
                 
                 DefaultMutableTreeNode clusterNode = new DefaultMutableTreeNode(nodeText);
                 
-                for (HttpRequestResponse reqResp : responsesInCluster) {
-                    // Use the counter for a generic, sequential label
-                    RequestResponseNode nodeObject = new RequestResponseNode(reqResp, requestCounter.getAndIncrement());
+                for (ClusteringEngine.IndexedHttpRequestResponse indexedReqResp : responsesInCluster) {
+                    // Use the original index from IndexedHttpRequestResponse
+                    RequestResponseNode nodeObject = new RequestResponseNode(indexedReqResp.getRequestResponse(), indexedReqResp.getOriginalIndex());
                     DefaultMutableTreeNode requestNode = new DefaultMutableTreeNode(nodeObject);
                     clusterNode.add(requestNode);
                 }
@@ -241,11 +252,11 @@ class ColonelClusteredTab extends JPanel {
 
 class RequestResponseNode {
     private final HttpRequestResponse requestResponse;
-    private final int requestIndex;
+    private final int originalIndex;
 
-    public RequestResponseNode(HttpRequestResponse requestResponse, int requestIndex) {
+    public RequestResponseNode(HttpRequestResponse requestResponse, int originalIndex) {
         this.requestResponse = requestResponse;
-        this.requestIndex = requestIndex;
+        this.originalIndex = originalIndex;
     }
 
     public HttpRequestResponse getRequestResponse() {
@@ -254,8 +265,8 @@ class RequestResponseNode {
 
     @Override
     public String toString() {
-        // Return a generic, sequential identifier
-        return "Request " + requestIndex;
+        // Return the original index
+        return "Request " + originalIndex; // Displaying 0-based index
     }
 }
 
@@ -276,20 +287,19 @@ class ClusterTreeCellRenderer extends DefaultTreeCellRenderer {
             boldFont = new Font(defaultFont.getName(), Font.BOLD, defaultFont.getSize() + 2);
         }
 
-        // Restore default expand/collapse icons
-        if (!leaf) {
-            if (expanded) {
-                setIcon(UIManager.getIcon("Tree.expandedIcon"));
-            } else {
-                setIcon(UIManager.getIcon("Tree.collapsedIcon"));
-            }
-        } else {
-            setIcon(null);
-        }
-
         // Apply custom styling only to the top-level cluster nodes
         if (value instanceof DefaultMutableTreeNode) {
             DefaultMutableTreeNode node = (DefaultMutableTreeNode) value;
+            if (!leaf) {
+                if (expanded) {
+                    setIcon(UIManager.getIcon("Tree.expandedIcon"));
+                } else {
+                    setIcon(UIManager.getIcon("Tree.collapsedIcon"));
+                }
+            } else { // Leaf node (individual request)
+                setIcon(null);
+            }
+
             if (node.getParent() == tree.getModel().getRoot() && node.getChildCount() > 0) {
                 setFont(boldFont);
                 setBackgroundNonSelectionColor(new Color(235, 235, 255)); // Lighter background

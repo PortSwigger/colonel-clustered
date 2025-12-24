@@ -28,7 +28,7 @@ Colonel Clustered solves this by analyzing the entire content of every response 
 1.  **Load the Extension**:
     - Go to the **Extensions** tab in Burp Suite.
     - Click **Add** and select the `ColonelClustered.jar` file.
-    - A new tab named "Colonel Clustered" should appear.
+    - A new tab named "Col. Clustered" should appear.
 
 2.  **Send Responses for Analysis**:
     - Go to any tool in Burp, such as Intruder results or Proxy history.
@@ -60,8 +60,7 @@ This project uses Gradle.
 -   **Author**: Drew Kirkpatrick
     -   **Twitter**: @hoodoer
     -   **Email**: hoodoer@bitwisemunitions.dev
--   **Consulting**: Professional security services provided by [TrustedSec](https://www.trustedsec.com).
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+This project is released into the public domain under the Unlicense. See the `LICENSE` file for details.

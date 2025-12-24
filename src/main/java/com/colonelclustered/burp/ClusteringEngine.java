@@ -15,7 +15,26 @@ import java.util.stream.Collectors;
 
 public class ClusteringEngine {
 
-    public Map<Integer, List<HttpRequestResponse>> clusterResponses(List<HttpRequestResponse> requestResponses, MontoyaApi api, Consumer<String> progressCallback) {
+    // Inner static class to hold an HttpRequestResponse and its original index
+    public static class IndexedHttpRequestResponse {
+        private final HttpRequestResponse requestResponse;
+        private final int originalIndex;
+
+        public IndexedHttpRequestResponse(HttpRequestResponse requestResponse, int originalIndex) {
+            this.requestResponse = requestResponse;
+            this.originalIndex = originalIndex;
+        }
+
+        public HttpRequestResponse getRequestResponse() {
+            return requestResponse;
+        }
+
+        public int getOriginalIndex() {
+            return originalIndex;
+        }
+    }
+
+    public Map<Integer, List<IndexedHttpRequestResponse>> clusterResponses(List<HttpRequestResponse> requestResponses, MontoyaApi api, Consumer<String> progressCallback) {
         List<String> responses = requestResponses.stream()
                 .map(HttpRequestResponse::response)
                 .map(response -> api.utilities().byteUtils().convertToString(response.body().getBytes()))
@@ -76,10 +95,10 @@ public class ClusteringEngine {
         DBSCAN<double[]> dbscan = DBSCAN.fit(projectedDataArray, minPts, epsilon);
 
         progressCallback.accept("Formatting results...");
-        Map<Integer, List<HttpRequestResponse>> clusteredResponses = new HashMap<>();
+        Map<Integer, List<IndexedHttpRequestResponse>> clusteredResponses = new HashMap<>();
         for (int i = 0; i < dbscan.y.length; i++) {
             int clusterId = dbscan.y[i];
-            clusteredResponses.computeIfAbsent(clusterId, k -> new ArrayList<>()).add(requestResponses.get(i));
+            clusteredResponses.computeIfAbsent(clusterId, k -> new ArrayList<>()).add(new IndexedHttpRequestResponse(requestResponses.get(i), i));
         }
         return clusteredResponses;
     }
