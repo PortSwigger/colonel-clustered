@@ -41,7 +41,7 @@ Colonel Clustered solves this by analyzing the entire content of every response 
     - Click on any individual request in the tree to view its full request and response in the viewers on the right.
 
 ## Screenshots
-<img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/0e8d4f82-894f-412b-b4ff-89b001cb872f" />
+<img width="1242" height="725" alt="Screenshot 2025-12-24 8 14 13 PM" src="https://github.com/user-attachments/assets/4aaae005-2c12-4166-b186-6da76a49a3b4" />
 
 <img width="1172" height="879" alt="Screenshot 2025-12-24 8 11 49 PM" src="https://github.com/user-attachments/assets/54d8fda2-bc23-4956-86d2-62565c4132f9" />
 
