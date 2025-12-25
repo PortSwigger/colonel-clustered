@@ -41,8 +41,12 @@ Colonel Clustered solves this by analyzing the entire content of every response 
     - Click on any individual request in the tree to view its full request and response in the viewers on the right.
 
 ## Screenshots
+<img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/0e8d4f82-894f-412b-b4ff-89b001cb872f" />
 
-*(TODO: Add at least one screenshot of the extension's user interface, showing the cluster results view.)*
+<img width="1172" height="879" alt="Screenshot 2025-12-24 8 11 49 PM" src="https://github.com/user-attachments/assets/54d8fda2-bc23-4956-86d2-62565c4132f9" />
+
+<img width="1168" height="871" alt="Screenshot 2025-12-24 8 12 55 PM" src="https://github.com/user-attachments/assets/04919421-f519-4a56-ac57-4cf8b87bac7c" />
+
 
 ## Building from Source
 
