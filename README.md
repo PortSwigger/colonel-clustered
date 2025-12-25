@@ -40,6 +40,10 @@ Colonel Clustered solves this by analyzing the entire content of every response 
     - The UI will display the clusters in a tree on the left. Groups with the fewest members (especially "Outliers") are often the most interesting.
     - Click on any individual request in the tree to view its full request and response in the viewers on the right.
 
+## Screenshots
+
+*(TODO: Add at least one screenshot of the extension's user interface, showing the cluster results view.)*
+
 ## Building from Source
 
 This project uses Gradle.

@@ -170,7 +170,9 @@ class ColonelClusteredTab extends JPanel {
             }
         });
 
-        JOptionPane.showMessageDialog(this, editorPane, "About Colonel Clustered", JOptionPane.INFORMATION_MESSAGE);
+        // Get the main Burp Suite frame and use it as the parent
+        Frame suiteFrame = api.userInterface().swingUtils().suiteFrame();
+        JOptionPane.showMessageDialog(suiteFrame, editorPane, "About Colonel Clustered", JOptionPane.INFORMATION_MESSAGE);
     }
 
     public void processRequestResponses(List<HttpRequestResponse> requestResponses) {
