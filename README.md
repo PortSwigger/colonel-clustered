@@ -8,20 +8,27 @@ When running automated attacks with tools like Burp Intruder, you often get thou
 
 Colonel Clustered solves this by analyzing the entire content of every response and grouping similar ones together, allowing you to instantly spot the outliers.
 
-## Features
+## How It Works
 
-- **Content-Based Clustering**: Uses a TF-IDF -> PCA -> DBSCAN pipeline to cluster responses based on their content, not just metadata.
-- **Outlier Detection**: The primary goal is to isolate unique or rare responses, which often represent interesting application behavior.
-- **Automatic Parameter Tuning**: Automatically determines the optimal parameters for the DBSCAN algorithm based on your specific dataset:
-    - **Adaptive `minPts`**: The `minPts` parameter (the minimum number of points to form a dense region) is calculated as the natural logarithm of your dataset size. This makes the clustering robust for both small and very large sets of requests.
-    - **Optimal `epsilon`**: The `epsilon` parameter (the maximum distance between two samples for one to be considered as in the neighborhood of the other) is found by analyzing the "knee" of the k-distance graph. This eliminates the need for manual, trial-and-error tuning.
-- **Universal Integration**: Works from the context menu of any Burp tool that handles HTTP requests/responses, including Proxy history, Repeater, and Intruder (including Turbo Intruder).
-- **Interactive & Scalable UI**:
-    - Displays clusters and their member counts in a hierarchical tree.
-    - **Collapsible Groups**: Cluster groups are collapsed by default, making it easy to navigate even with thousands of requests.
-    - **Visually Nested Structure**: Parent cluster nodes are larger and styled differently to clearly distinguish them from the child request nodes, creating an intuitive nested appearance.
-    - Integrates Burp's native request/response viewers for familiar analysis.
-    - Click any request in the tree to see its full request and response.
+Colonel Clustered uses a high-performance, multi-stage hybrid algorithm to provide fast and accurate clustering without requiring any manual tuning.
+
+1.  **Content-Aware Tokenization**: The extension first inspects the `Content-Type` header of each response to apply the most intelligent tokenization strategy:
+    -   **HTML**: Strips all tags and scripts, then tokenizes the visible text content.
+    -   **JSON**: Extracts all string and numeric values as tokens.
+    -   **Text**: Performs a generic split on non-alphanumeric characters (whitespace, punctuation).
+    -   **Binary/Other**: If the content is not text-based, it generates a set of 5-byte n-grams to find similarities in the binary data.
+
+2.  **High-Performance Pre-Grouping**: To remain fast even with thousands of responses, the extension performs a single pass to group all *perfectly identical* responses. It calculates a hash of each response's token set and groups all items that share the same hash. This means the expensive clustering algorithm only has to run on the much smaller set of *unique* response bodies.
+
+3.  **Self-Tuning Hierarchical Clustering**: The set of unique responses is then clustered using a custom agglomerative hierarchical algorithm:
+    -   First, a similarity matrix is built by calculating the Jaccard distance between every pair of unique responses.
+    -   The algorithm then iteratively merges the most similar clusters. It records the distance at which each merge occurs.
+    -   **Automatic Threshold Detection**: To find the "best" number of clusters, the algorithm analyzes the list of merge distances and finds the largest "jump" or "elbow." This point represents the most natural place to stop merging, automatically adapting the clustering granularity to the dataset.
+    -   **Needle-in-a-Haystack Detection**: A special rule handles cases with only two highly dissimilar unique responses, ensuring that clear outliers are always separated.
+
+4.  **Outlier Consolidation**: After the best clustering is determined, any resulting cluster containing only a single unique member is considered an outlier. All such outliers are then consolidated into a single, convenient "Outliers" group in the UI.
+
+This hybrid approach provides the best of all worlds: the speed of a single-pass algorithm, the intelligence of content-aware analysis, and the power of a self-tuning hierarchical clustering model to find a natural and useful balance of clusters for any given dataset.
 
 ## How to Use
 

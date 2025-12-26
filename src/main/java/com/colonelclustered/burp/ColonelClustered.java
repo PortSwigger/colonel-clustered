@@ -9,7 +9,6 @@ import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
-import smile.clustering.PartitionClustering;
 
 import javax.swing.*;
 import javax.swing.event.HyperlinkEvent;
@@ -227,7 +226,7 @@ class ColonelClusteredTab extends JPanel {
             .forEach(entry -> {
                 int clusterId = entry.getKey();
                 List<ClusteringEngine.IndexedHttpRequestResponse> responsesInCluster = entry.getValue();
-                String nodeText = (clusterId == PartitionClustering.OUTLIER ? "Outliers" : "Cluster " + clusterId)
+                String nodeText = (clusterId == -1 ? "Outliers" : "Cluster " + clusterId)
                                   + " (" + responsesInCluster.size() + " items)";
                 
                 DefaultMutableTreeNode clusterNode = new DefaultMutableTreeNode(nodeText);

@@ -2,20 +2,14 @@ package com.colonelclustered.burp;
 
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.http.message.HttpRequestResponse;
-import org.apache.commons.math3.linear.Array2DRowRealMatrix;
-import org.apache.commons.math3.linear.EigenDecomposition;
-import org.apache.commons.math3.linear.RealMatrix;
-import org.apache.commons.math3.stat.correlation.Covariance;
-import smile.clustering.DBSCAN;
-import smile.math.distance.EuclideanDistance;
+import com.colonelclustered.burp.tokenizers.Tokenizer;
+import com.colonelclustered.burp.tokenizers.TokenizerFactory;
 
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 public class ClusteringEngine {
 
-    // Inner static class to hold an HttpRequestResponse and its original index
     public static class IndexedHttpRequestResponse {
         private final HttpRequestResponse requestResponse;
         private final int originalIndex;
@@ -25,149 +19,204 @@ public class ClusteringEngine {
             this.originalIndex = originalIndex;
         }
 
-        public HttpRequestResponse getRequestResponse() {
-            return requestResponse;
-        }
+        public HttpRequestResponse getRequestResponse() { return requestResponse; }
+        public int getOriginalIndex() { return originalIndex; }
+    }
 
-        public int getOriginalIndex() {
-            return originalIndex;
-        }
+    private final TokenizerFactory tokenizerFactory;
+
+    public ClusteringEngine() {
+        this.tokenizerFactory = new TokenizerFactory();
     }
 
     public Map<Integer, List<IndexedHttpRequestResponse>> clusterResponses(List<HttpRequestResponse> requestResponses, MontoyaApi api, Consumer<String> progressCallback) {
-        List<String> responses = requestResponses.stream()
-                .map(HttpRequestResponse::response)
-                .map(response -> api.utilities().byteUtils().convertToString(response.body().getBytes()))
-                .collect(Collectors.toList());
-
-        // 1. TF-IDF
-        progressCallback.accept("Step 1/4: Performing TF-IDF vectorization...");
-        List<List<String>> tokenizedDocuments = responses.stream()
-                .map(this::tokenize)
-                .collect(Collectors.toList());
-
-        Set<String> vocabulary = tokenizedDocuments.stream().flatMap(Collection::stream).collect(Collectors.toSet());
-        Map<String, Double> idf = calculateIDF(tokenizedDocuments, vocabulary);
-        double[][] tfidfVectors = calculateTFIDF(tokenizedDocuments, idf, vocabulary);
-
-        // 2. PCA
-        progressCallback.accept("Step 2/4: Reducing dimensions with PCA...");
-        if (tfidfVectors.length == 0 || tfidfVectors[0].length < 2) {
-            progressCallback.accept("Error: Not enough data for PCA.");
+        if (requestResponses.size() < 2) {
+            if (requestResponses.size() == 1) {
+                Map<Integer, List<IndexedHttpRequestResponse>> singleCluster = new HashMap<>();
+                singleCluster.computeIfAbsent(1, k -> new ArrayList<>()).add(new IndexedHttpRequestResponse(requestResponses.get(0), 0));
+                return singleCluster;
+            }
             return Collections.emptyMap();
         }
-        RealMatrix matrix = new Array2DRowRealMatrix(tfidfVectors);
-        for (int j = 0; j < matrix.getColumnDimension(); j++) {
-            double mean = matrix.getColumnVector(j).getNorm() / matrix.getColumnDimension();
-            for (int i = 0; i < matrix.getRowDimension(); i++) {
-                matrix.addToEntry(i, j, -mean);
+
+        progressCallback.accept("Step 1/4: Pre-grouping identical responses...");
+        Map<Integer, List<Integer>> hashToOriginalIndices = new HashMap<>();
+        List<Set<String>> uniqueTokenSets = new ArrayList<>();
+        Map<Integer, Integer> hashToUniqueIndex = new HashMap<>();
+
+        for (int i = 0; i < requestResponses.size(); i++) {
+            Tokenizer tokenizer = tokenizerFactory.getTokenizer(requestResponses.get(i).response());
+            Set<String> tokens = tokenizer.tokenize(requestResponses.get(i).response().body().getBytes());
+            int hash = tokens.hashCode();
+            hashToOriginalIndices.computeIfAbsent(hash, k -> new ArrayList<>()).add(i);
+            if (!hashToUniqueIndex.containsKey(hash)) {
+                hashToUniqueIndex.put(hash, uniqueTokenSets.size());
+                uniqueTokenSets.add(tokens);
             }
         }
-        Covariance covariance = new Covariance(matrix);
-        RealMatrix covarianceMatrix = covariance.getCovarianceMatrix();
-        EigenDecomposition ed = new EigenDecomposition(covarianceMatrix);
+        api.logging().logToOutput("Found " + uniqueTokenSets.size() + " unique response bodies out of " + requestResponses.size() + " total responses.");
 
-        int numComponents = Math.min(2, ed.getRealEigenvalues().length);
-        RealMatrix projection = ed.getV().getSubMatrix(0, covarianceMatrix.getColumnDimension() - 1, 0, numComponents - 1);
-        RealMatrix projectedData = matrix.multiply(projection);
-        double[][] projectedDataArray = projectedData.getData();
+        progressCallback.accept("Step 2/4: Calculating similarity matrix...");
+        int numUnique = uniqueTokenSets.size();
+        double[][] distanceMatrix = new double[numUnique][numUnique];
+        for (int i = 0; i < numUnique; i++) {
+            for (int j = i; j < numUnique; j++) {
+                double dist = calculateJaccardDistance(uniqueTokenSets.get(i), uniqueTokenSets.get(j));
+                distanceMatrix[i][j] = dist;
+                distanceMatrix[j][i] = dist;
+            }
+        }
+        
+        progressCallback.accept("Step 3/4: Determining optimal clustering...");
+        List<Set<Integer>> bestClustering = findBestClustering(distanceMatrix, api);
 
-        // 3. Automated Epsilon Tuning
-        progressCallback.accept("Step 3/4: Automatically determining optimal epsilon...");
+        progressCallback.accept("Step 4/4: Mapping final cluster results...");
+        Map<Integer, List<IndexedHttpRequestResponse>> finalClusteredResponses = new HashMap<>();
+        List<IndexedHttpRequestResponse> outliers = new ArrayList<>();
+        int clusterId = 1;
+
+        bestClustering.sort(Comparator.comparingInt((Set<Integer> s) -> s.size()).reversed());
         
-        // Adapt minPts based on the size of the dataset. ln(N) is a good heuristic.
-        // We use a minimum of 2 for very small datasets.
-        int minPts = Math.max(2, (int) Math.log(projectedDataArray.length));
-        
-        double epsilon = findOptimalEpsilon(projectedDataArray, minPts);
-        
-        // If all points are identical, epsilon can be 0.0, which is an invalid radius for DBSCAN.
-        // Fallback to a small default value in this case.
-        if (epsilon == 0.0) {
-            epsilon = 0.1;
-            progressCallback.accept("Optimal epsilon was 0.0; falling back to " + epsilon + " with minPts: " + minPts);
-        } else {
-            progressCallback.accept("Found optimal epsilon: " + String.format("%.4f", epsilon) + " with minPts: " + minPts);
+        for (Set<Integer> uniqueCluster : bestClustering) {
+            List<IndexedHttpRequestResponse> fullClusterMembers = new ArrayList<>();
+            for (int uniqueIndex : uniqueCluster) {
+                int targetHash = -1;
+                for (Map.Entry<Integer, Integer> entry : hashToUniqueIndex.entrySet()) {
+                    if (entry.getValue().equals(uniqueIndex)) {
+                        targetHash = entry.getKey();
+                        break;
+                    }
+                }
+                if (targetHash != -1) {
+                    for (int originalIndex : hashToOriginalIndices.get(targetHash)) {
+                        fullClusterMembers.add(new IndexedHttpRequestResponse(requestResponses.get(originalIndex), originalIndex));
+                    }
+                }
+            }
+
+            if (fullClusterMembers.size() == 1 && bestClustering.size() > 1) {
+                outliers.addAll(fullClusterMembers);
+            } else {
+                finalClusteredResponses.put(clusterId++, fullClusterMembers);
+            }
         }
 
-        // 4. DBSCAN
-        progressCallback.accept("Step 4/4: Clustering with DBSCAN...");
-        DBSCAN<double[]> dbscan = DBSCAN.fit(projectedDataArray, minPts, epsilon);
-
-        progressCallback.accept("Formatting results...");
-        Map<Integer, List<IndexedHttpRequestResponse>> clusteredResponses = new HashMap<>();
-        for (int i = 0; i < dbscan.y.length; i++) {
-            int clusterId = dbscan.y[i];
-            clusteredResponses.computeIfAbsent(clusterId, k -> new ArrayList<>()).add(new IndexedHttpRequestResponse(requestResponses.get(i), i));
+        if (!outliers.isEmpty()) {
+            finalClusteredResponses.put(-1, outliers);
         }
-        return clusteredResponses;
+        
+        return finalClusteredResponses;
     }
 
-    private double findOptimalEpsilon(double[][] data, int k) {
-        if (data.length <= k) {
-            return 0.1;
+    private double calculateJaccardDistance(Set<String> set1, Set<String> set2) {
+        if (set1.isEmpty() && set2.isEmpty()) return 0.0;
+        Set<String> intersection = new HashSet<>(set1);
+        intersection.retainAll(set2);
+        Set<String> union = new HashSet<>(set1);
+        union.addAll(set2);
+        if (union.isEmpty()) return 0.0;
+        return 1.0 - ((double) intersection.size() / union.size());
+    }
+    
+    private List<Set<Integer>> findBestClustering(double[][] distanceMatrix, MontoyaApi api) {
+        List<Set<Integer>> clusters = new ArrayList<>();
+        for (int i = 0; i < distanceMatrix.length; i++) {
+            clusters.add(new HashSet<>(Collections.singletonList(i)));
         }
-        double[] kDistances = new double[data.length];
-        EuclideanDistance dist = new EuclideanDistance();
 
-        for (int i = 0; i < data.length; i++) {
-            double[] point = data[i];
-            List<Double> distances = new ArrayList<>();
-            for (int j = 0; j < data.length; j++) {
-                if (i == j) continue;
-                distances.add(dist.d(point, data[j]));
+        if (clusters.size() <= 1) return clusters;
+
+        List<Double> mergeDistances = new ArrayList<>();
+        // Make a copy to preserve the original N-cluster state
+        List<Set<Integer>> originalClusters = new ArrayList<>();
+        for (Set<Integer> cluster : clusters) {
+            originalClusters.add(new HashSet<>(cluster));
+        }
+
+        while (clusters.size() > 1) {
+            double minDistance = Double.MAX_VALUE;
+            int c1Idx = -1, c2Idx = -1;
+            for (int i = 0; i < clusters.size(); i++) {
+                for (int j = i + 1; j < clusters.size(); j++) {
+                    double currentMinClusterDistance = findMinClusterDistance(clusters.get(i), clusters.get(j), distanceMatrix);
+                    if (currentMinClusterDistance < minDistance) {
+                        minDistance = currentMinClusterDistance;
+                        c1Idx = i;
+                        c2Idx = j;
+                    }
+                }
             }
-            Collections.sort(distances);
-            if (distances.size() >= k) {
-                kDistances[i] = distances.get(k - 1);
+            if (c1Idx != -1) {
+                mergeDistances.add(minDistance);
+                Set<Integer> merged = new HashSet<>(clusters.get(c1Idx));
+                merged.addAll(clusters.get(c2Idx));
+                clusters.remove(c2Idx);
+                clusters.remove(c1Idx);
+                clusters.add(merged);
+            } else {
+                break;
             }
         }
-        Arrays.sort(kDistances);
         
-        double maxDist = -1;
-        int kneeIndex = -1;
-        double x1 = 0, y1 = kDistances[0];
-        double x2 = kDistances.length - 1, y2 = kDistances[kDistances.length - 1];
+        double optimalThreshold = 0.5; // Default fallback
+        if (!mergeDistances.isEmpty()) {
+            double maxJump = 0;
+            int bestCutIndex = -1;
+            for (int i = 0; i < mergeDistances.size() - 1; i++) {
+                double jump = mergeDistances.get(i + 1) - mergeDistances.get(i);
+                if (jump > maxJump) {
+                    maxJump = jump;
+                    bestCutIndex = i;
+                }
+            }
+            optimalThreshold = (bestCutIndex != -1) ? mergeDistances.get(bestCutIndex) + 0.0001 : mergeDistances.get(mergeDistances.size() - 1) + 0.0001;
+        }
+        api.logging().logToOutput("Automatically determined merge threshold: " + String.format("%.4f", optimalThreshold));
+        
+        // Sanity Check for needle-in-a-haystack
+        if (distanceMatrix.length == 2 && distanceMatrix[0][1] > 0.1) {
+             api.logging().logToOutput("Sanity check triggered: Forcing two clusters for high-distance pair.");
+             return originalClusters;
+        }
+        
+        clusters.clear();
+        for (int i = 0; i < distanceMatrix.length; i++) {
+            clusters.add(new HashSet<>(Collections.singletonList(i)));
+        }
+        
+        while (true) {
+            double minDistance = Double.MAX_VALUE;
+            int c1Idx = -1, c2Idx = -1;
+            for (int i = 0; i < clusters.size(); i++) {
+                for (int j = i + 1; j < clusters.size(); j++) {
+                    double currentMinClusterDistance = findMinClusterDistance(clusters.get(i), clusters.get(j), distanceMatrix);
+                    if (currentMinClusterDistance < minDistance) {
+                        minDistance = currentMinClusterDistance;
+                        c1Idx = i;
+                        c2Idx = j;
+                    }
+                }
+            }
+            if (minDistance >= optimalThreshold || c1Idx == -1) {
+                break;
+            }
+            Set<Integer> merged = new HashSet<>(clusters.get(c1Idx));
+            merged.addAll(clusters.get(c2Idx));
+            clusters.remove(c2Idx);
+            clusters.remove(c1Idx);
+            clusters.add(merged);
+        }
+        
+        return clusters;
+    }
 
-        for (int i = 0; i < kDistances.length; i++) {
-            double x0 = i, y0 = kDistances[i];
-            double distance = Math.abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1) / Math.sqrt(Math.pow(y2 - y1, 2) + Math.pow(x2 - x1, 2));
-            if (distance > maxDist) {
-                maxDist = distance;
-                kneeIndex = i;
+    private double findMinClusterDistance(Set<Integer> c1, Set<Integer> c2, double[][] distanceMatrix) {
+        double min = Double.MAX_VALUE;
+        for (int p1 : c1) {
+            for (int p2 : c2) {
+                min = Math.min(min, distanceMatrix[p1][p2]);
             }
         }
-
-        return kDistances[kneeIndex];
-    }
-
-    private List<String> tokenize(String text) {
-        return Arrays.asList(text.toLowerCase().split("\\s+"));
-    }
-
-    private Map<String, Double> calculateIDF(List<List<String>> documents, Set<String> vocabulary) {
-        Map<String, Double> idf = new HashMap<>();
-        int totalDocuments = documents.size();
-        for (String term : vocabulary) {
-            long docFrequency = documents.stream().filter(doc -> doc.contains(term)).count();
-            idf.put(term, Math.log((double) totalDocuments / (1 + docFrequency)));
-        }
-        return idf;
-    }
-
-    private double[][] calculateTFIDF(List<List<String>> documents, Map<String, Double> idf, Set<String> vocabulary) {
-        List<String> vocabList = new ArrayList<>(vocabulary);
-        double[][] tfidfMatrix = new double[documents.size()][vocabulary.size()];
-        for (int i = 0; i < documents.size(); i++) {
-            List<String> doc = documents.get(i);
-            Map<String, Long> tf = doc.stream().collect(Collectors.groupingBy(e -> e, Collectors.counting()));
-            for (int j = 0; j < vocabList.size(); j++) {
-                String term = vocabList.get(j);
-                double tfValue = (double) tf.getOrDefault(term, 0L) / doc.size();
-                double idfValue = idf.getOrDefault(term, 0.0);
-                tfidfMatrix[i][j] = tfValue * idfValue;
-            }
-        }
-        return tfidfMatrix;
+        return min;
     }
 }
