@@ -11,7 +11,10 @@ import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
 
 import javax.swing.*;
+import javax.swing.border.Border;
 import javax.swing.event.HyperlinkEvent;
+import javax.swing.table.AbstractTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.DefaultTreeCellRenderer;
@@ -19,11 +22,10 @@ import java.awt.*;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 public class ColonelClustered implements BurpExtension, ContextMenuItemsProvider {
     private MontoyaApi api;
@@ -59,257 +61,377 @@ public class ColonelClustered implements BurpExtension, ContextMenuItemsProvider
 class ColonelClusteredTab extends JPanel {
     private final MontoyaApi api;
     private final ClusteringEngine clusteringEngine;
-    private final JTree clusterTree;
-    private final DefaultTreeModel treeModel;
-    private final HttpRequestEditor requestViewer;
-    private final HttpResponseEditor responseViewer;
-    private final CardLayout cardLayout;
-    private final JPanel mainPanel;
-    private final JLabel resultsLabel; // Label for the results count
-
-    public ColonelClusteredTab(MontoyaApi api) {
-        this.api = api;
-        this.clusteringEngine = new ClusteringEngine();
-        cardLayout = new CardLayout();
-        mainPanel = new JPanel(cardLayout);
-
-        // --- Status Panel ---
-        JPanel statusPanel = new JPanel(new GridBagLayout());
-        statusPanel.add(new JLabel("Waiting for analysis... Right-click items and 'Send to Colonel Clustered'."));
-        mainPanel.add(statusPanel, "status");
-
-        // --- Results Panel ---
-        JPanel resultsPanel = new JPanel(new BorderLayout());
-        
-        UserInterface userInterface = api.userInterface();
-        requestViewer = userInterface.createHttpRequestEditor();
-        responseViewer = userInterface.createHttpResponseEditor();
-        JSplitPane viewersSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, requestViewer.uiComponent(), responseViewer.uiComponent());
-        viewersSplitPane.setResizeWeight(0.5);
-        
-        DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Root");
-        treeModel = new DefaultTreeModel(rootNode);
-        clusterTree = new JTree(treeModel);
-        clusterTree.setRootVisible(false); // Do not show the root node
-        clusterTree.setCellRenderer(new ClusterTreeCellRenderer());
-        clusterTree.addTreeSelectionListener(e -> {
-            Object lastPathComponent = e.getPath().getLastPathComponent();
-            if (lastPathComponent instanceof DefaultMutableTreeNode) {
-                DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) lastPathComponent;
-                Object userObject = selectedNode.getUserObject();
-                if (userObject instanceof RequestResponseNode) {
-                    // Use the HttpRequestResponse from the RequestResponseNode
-                    HttpRequestResponse selectedRequestResponse = ((RequestResponseNode) userObject).getRequestResponse();
-                    requestViewer.setRequest(selectedRequestResponse.request());
-                    responseViewer.setResponse(selectedRequestResponse.response());
+        private final JTree clusterTree;
+        private final JTable requestTable;
+        private final RequestResponseTableModel tableModel;
+        private final DefaultTreeModel treeModel;
+        private final HttpRequestEditor requestViewer;
+        private final HttpResponseEditor responseViewer;
+        private final CardLayout cardLayout;
+        private final JPanel mainPanel;
+        private final JLabel resultsLabel; // Label for the results count
+        private Map<DefaultMutableTreeNode, List<RequestResponseNode>> clusterNodeData;
+    
+    
+        public ColonelClusteredTab(MontoyaApi api) {
+            this.api = api;
+            this.clusteringEngine = new ClusteringEngine();
+            this.clusterNodeData = new HashMap<>();
+            cardLayout = new CardLayout();
+            mainPanel = new JPanel(cardLayout);
+    
+            // --- Status Panel ---
+            JPanel statusPanel = new JPanel(new GridBagLayout());
+            statusPanel.add(new JLabel("Waiting for analysis... Right-click items and 'Send to Colonel Clustered'."));
+            mainPanel.add(statusPanel, "status");
+    
+            // --- Results Panel ---
+            JPanel resultsPanel = new JPanel(new BorderLayout());
+            
+            UserInterface userInterface = api.userInterface();
+            requestViewer = userInterface.createHttpRequestEditor();
+            responseViewer = userInterface.createHttpResponseEditor();
+            JSplitPane viewersSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, requestViewer.uiComponent(), responseViewer.uiComponent());
+            viewersSplitPane.setResizeWeight(0.5);
+            
+                            
+            
+                            DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Root");
+            
+                            treeModel = new DefaultTreeModel(rootNode);
+            
+                            clusterTree = new JTree(treeModel);
+            
+                            clusterTree.setRootVisible(false); // Do not show the root node
+            
+                            clusterTree.setCellRenderer(new ClusterTreeCellRenderer());
+            
+                            
+            
+                            // --- Setup Table ---
+            
+                                    tableModel = new RequestResponseTableModel();
+            
+                                    requestTable = new JTable(tableModel);
+            
+                                    requestTable.setAutoCreateRowSorter(true); // Enable sorting!
+            
+                            
+            
+                                    // Set all columns to left alignment for consistency with Burp UI
+            
+                                    DefaultTableCellRenderer leftRenderer = new DefaultTableCellRenderer();
+            
+                                    leftRenderer.setHorizontalAlignment(SwingConstants.LEFT);
+            
+                            
+            
+                                    requestTable.getColumnModel().getColumn(0).setCellRenderer(leftRenderer); // Request/Response Pair
+            
+                                    requestTable.getColumnModel().getColumn(1).setCellRenderer(leftRenderer); // Status Code
+            
+                                    requestTable.getColumnModel().getColumn(2).setCellRenderer(leftRenderer); // Length
+            
+                                            requestTable.getColumnModel().getColumn(3).setCellRenderer(leftRenderer); // Content-Type
+            
+                                    
+            
+                                            // Left-align table headers as well
+            
+                                            DefaultTableCellRenderer headerRenderer = (DefaultTableCellRenderer) requestTable.getTableHeader().getDefaultRenderer();
+            
+                                            headerRenderer.setHorizontalAlignment(SwingConstants.LEFT);
+            
+                                    
+            
+                                            clusterTree.addTreeSelectionListener(e -> {
+            
+                                Object lastPathComponent = e.getPath().getLastPathComponent();
+            
+                                if (lastPathComponent instanceof DefaultMutableTreeNode) {
+            
+                                    DefaultMutableTreeNode selectedNode = (DefaultMutableTreeNode) lastPathComponent;
+            
+                                    // Since the tree now only contains cluster nodes, they are all effectively leaves in their display.
+            
+                                    if (clusterNodeData.containsKey(selectedNode)) {
+            
+                                        // When a cluster is selected in the tree, update the table
+            
+                                        tableModel.setRequestResponses(clusterNodeData.get(selectedNode));
+            
+                                    }
+            
+                                }
+            
+                            });
+            
+                    
+            
+                            // When a row is selected in the table, update the viewers
+            
+                            requestTable.getSelectionModel().addListSelectionListener(e -> {
+                if (!e.getValueIsAdjusting()) {
+                    int selectedRow = requestTable.getSelectedRow();
+                    if (selectedRow != -1) {
+                        // Convert view index to model index in case of sorting
+                        int modelRow = requestTable.convertRowIndexToModel(selectedRow);
+                        RequestResponseNode selectedNode = tableModel.getRequestResponseAt(modelRow);
+                        if (selectedNode != null) {
+                            requestViewer.setRequest(selectedNode.getRequestResponse().request());
+                            responseViewer.setResponse(selectedNode.getRequestResponse().response());
+                        }
+                    }
                 }
-            }
-        });
+            });
+            
+        
         JScrollPane treeScrollPane = new JScrollPane(clusterTree);
+        JScrollPane tableScrollPane = new JScrollPane(requestTable);
 
-        // Panel to hold the results label and the tree
-        JPanel treePanel = new JPanel(new BorderLayout());
+        // --- Left side of the UI ---
+        JSplitPane leftSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, treeScrollPane, tableScrollPane);
+        leftSplitPane.setResizeWeight(0.3);
+
+        // --- Main Layout ---
+        JSplitPane mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftSplitPane, viewersSplitPane);
+        mainSplitPane.setResizeWeight(0.3);
+        
         resultsLabel = new JLabel("No analysis run yet.", SwingConstants.CENTER);
         resultsLabel.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
-        treePanel.add(resultsLabel, BorderLayout.NORTH);
-        treePanel.add(treeScrollPane, BorderLayout.CENTER);
-
-        JSplitPane mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, treePanel, viewersSplitPane);
-        mainSplitPane.setResizeWeight(0.3);
+        
+        resultsPanel.add(resultsLabel, BorderLayout.NORTH);
         resultsPanel.add(mainSplitPane, BorderLayout.CENTER);
         
         mainPanel.add(resultsPanel, "results");
-
-        // --- Top Panel with Buttons ---
-        JButton clearButton = new JButton("Clear Results");
-        clearButton.addActionListener(e -> clearResults());
-        
-        JButton aboutButton = new JButton("About");
-        aboutButton.addActionListener(e -> showAboutDialog());
-        
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        buttonPanel.add(clearButton);
-        buttonPanel.add(aboutButton);
-
-        setLayout(new BorderLayout());
-        add(buttonPanel, BorderLayout.NORTH);
-        add(mainPanel, BorderLayout.CENTER);
-    }
-
-    private void clearResults() {
-        treeModel.setRoot(new DefaultMutableTreeNode("Root"));
-        resultsLabel.setText("Results cleared.");
-        requestViewer.setRequest(null);
-        responseViewer.setResponse(null);
-        cardLayout.show(mainPanel, "status");
-    }
-
-    private void showAboutDialog() {
-        String htmlContent = "<html><body style='width: 300px; padding: 10px;'>"
-            + "<h1>Colonel Clustered</h1>"
-            + "<p><b>Version:</b> 1.0.0</p>"
-            + "<p>A Burp Suite extension for clustering HTTP responses to find outliers.</p>"
-            + "<hr>"
-            + "<h3>Author</h3>"
-            + "<p><b>Drew Kirkpatrick</b><br>"
-            + "<b>Twitter:</b> @hoodoer<br>"
-            + "<b>Email:</b> hoodoer@bitwisemunitions.dev</p>"
-            + "</body></html>";
-
-        JEditorPane editorPane = new JEditorPane("text/html", htmlContent);
-        editorPane.setEditable(false);
-        editorPane.setOpaque(false);
-        editorPane.addHyperlinkListener(e -> {
-            if (e.getEventType() == HyperlinkEvent.EventType.ACTIVATED) {
-                try {
-                    Desktop.getDesktop().browse(e.getURL().toURI());
-                } catch (IOException | URISyntaxException ex) {
-                    api.logging().logToError(ex);
+    
+            // --- Top Panel with Buttons ---
+            JButton clearButton = new JButton("Clear Results");
+            clearButton.addActionListener(e -> clearResults());
+            
+            JButton aboutButton = new JButton("About");
+            aboutButton.addActionListener(e -> showAboutDialog());
+            
+            JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+            buttonPanel.add(clearButton);
+            buttonPanel.add(aboutButton);
+    
+            setLayout(new BorderLayout());
+            add(buttonPanel, BorderLayout.NORTH);
+            add(mainPanel, BorderLayout.CENTER);
+        }
+    
+        private void clearResults() {
+            treeModel.setRoot(new DefaultMutableTreeNode("Root"));
+            tableModel.setRequestResponses(new ArrayList<>()); // Clear table
+            resultsLabel.setText("Results cleared.");
+            requestViewer.setRequest(null);
+            responseViewer.setResponse(null);
+            cardLayout.show(mainPanel, "status");
+        }
+    
+        private void showAboutDialog() {
+            String htmlContent = "<html><body style='width: 300px; padding: 10px;'>"
+                + "<h1>Colonel Clustered</h1>"
+                + "<p><b>Version:</b> 1.0.0</p>"
+                + "<p>A Burp Suite extension for clustering HTTP responses to find outliers.</p>"
+                + "<hr>"
+                + "<h3>Author</h3>"
+                + "<p><b>Drew Kirkpatrick</b><br>"
+                + "<b>Twitter:</b> @hoodoer<br>"
+                + "<b>Email:</b> hoodoer@bitwisemunitions.dev</p>"
+                + "</body></html>";
+    
+            JEditorPane editorPane = new JEditorPane("text/html", htmlContent);
+            editorPane.setEditable(false);
+            editorPane.setOpaque(false);
+            editorPane.addHyperlinkListener(e -> {
+                if (e.getEventType() == HyperlinkEvent.EventType.ACTIVATED) {
+                    try {
+                        Desktop.getDesktop().browse(e.getURL().toURI());
+                    } catch (IOException | URISyntaxException ex) {
+                        api.logging().logToError(ex);
+                    }
                 }
-            }
-        });
-
-        // Get the main Burp Suite frame and use it as the parent
-        Frame suiteFrame = api.userInterface().swingUtils().suiteFrame();
-        JOptionPane.showMessageDialog(suiteFrame, editorPane, "About Colonel Clustered", JOptionPane.INFORMATION_MESSAGE);
+            });
+    
+            // Get the main Burp Suite frame and use it as the parent
+            Frame suiteFrame = api.userInterface().swingUtils().suiteFrame();
+            JOptionPane.showMessageDialog(suiteFrame, editorPane, "About Colonel Clustered", JOptionPane.INFORMATION_MESSAGE);
+        }
+    
+        public void processRequestResponses(List<HttpRequestResponse> requestResponses) {
+            clearResults();
+            cardLayout.show(mainPanel, "status");
+            JPanel statusPanel = (JPanel) mainPanel.getComponent(0);
+            JLabel statusLabel = (JLabel) statusPanel.getComponent(0);
+            statusLabel.setText("Starting clustering for " + requestResponses.size() + " items...");
+    
+            SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> worker = new SwingWorker<>() {
+                @Override
+                protected Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> doInBackground() {
+                    return clusteringEngine.clusterResponses(requestResponses, api, this::publish);
+                }
+                
+                @Override
+                protected void process(List<String> chunks) {
+                    statusLabel.setText(chunks.get(chunks.size() - 1));
+                }
+    
+                @Override
+                protected void done() {
+                    try {
+                        api.logging().logToOutput("Clustering complete. Entering done() method.");
+                        Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> result = get();
+                        api.logging().logToOutput("Result received with " + result.size() + " clusters.");
+                        
+                        displayResults(result);
+                        api.logging().logToOutput("displayResults() method completed.");
+    
+                        cardLayout.show(mainPanel, "results");
+                        api.logging().logToOutput("Switched to results panel.");
+    
+                    } catch (InterruptedException | ExecutionException e) {
+                        api.logging().logToError(e);
+                        api.logging().logToOutput("Error during clustering: " + e.getMessage());
+                        statusLabel.setText("Error during clustering: " + e.getMessage());
+                    }
+                }
+            };
+            worker.execute();
+        }
+    
+        private void displayResults(Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> clusteredResponses) {
+            DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Root");
+            clusterNodeData.clear(); // Clear old data
+    
+            long totalItems = clusteredResponses.values().stream().mapToLong(List::size).sum();
+            resultsLabel.setText("Clustering Results (" + totalItems + " total items)");
+    
+            clusteredResponses.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    int clusterId = entry.getKey();
+                    List<ClusteringEngine.IndexedHttpRequestResponse> responsesInCluster = entry.getValue();
+                    String nodeText = (clusterId == -1 ? "Outliers" : "Cluster " + clusterId)
+                                      + " (" + responsesInCluster.size() + " items)";
+                    
+                    DefaultMutableTreeNode clusterNode = new DefaultMutableTreeNode(nodeText);
+                    
+                    // Convert to RequestResponseNode and store in map
+                    List<RequestResponseNode> nodeObjects = new ArrayList<>();
+                    for (ClusteringEngine.IndexedHttpRequestResponse indexedReqResp : responsesInCluster) {
+                        nodeObjects.add(new RequestResponseNode(indexedReqResp.getRequestResponse(), indexedReqResp.getOriginalIndex()));
+                    }
+                    clusterNodeData.put(clusterNode, nodeObjects);
+    
+                    rootNode.add(clusterNode);
+                });
+            
+            treeModel.setRoot(rootNode);
+        }
     }
-
-    public void processRequestResponses(List<HttpRequestResponse> requestResponses) {
-        clearResults();
-        cardLayout.show(mainPanel, "status");
-        JPanel statusPanel = (JPanel) mainPanel.getComponent(0);
-        JLabel statusLabel = (JLabel) statusPanel.getComponent(0);
-        statusLabel.setText("Starting clustering for " + requestResponses.size() + " items...");
-
-        SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> worker = new SwingWorker<>() {
-            @Override
-            protected Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> doInBackground() {
-                return clusteringEngine.clusterResponses(requestResponses, api, this::publish);
+    
+    class RequestResponseTableModel extends AbstractTableModel {
+        private final String[] columnNames = {"Request/Response Pair", "Status Code", "Length", "Content-Type"};
+        private List<RequestResponseNode> requestResponses = new ArrayList<>();
+    
+        @Override
+        public int getRowCount() {
+            return requestResponses.size();
+        }
+    
+        @Override
+        public int getColumnCount() {
+            return columnNames.length;
+        }
+    
+        @Override
+        public String getColumnName(int column) {
+            return columnNames[column];
+        }
+    
+        @Override
+        public Class<?> getColumnClass(int columnIndex) {
+            switch (columnIndex) {
+                case 0: // Request/Response Pair
+                case 1: // Status Code
+                case 2: // Length
+                    return Integer.class;
+                case 3: // Content-Type
+                    return String.class;
+                default:
+                    return Object.class;
+            }
+        }
+    
+        @Override
+        public Object getValueAt(int rowIndex, int columnIndex) {
+            RequestResponseNode node = requestResponses.get(rowIndex);
+            HttpRequestResponse reqResp = node.getRequestResponse();
+    
+            switch (columnIndex) {
+                case 0:
+                    return node.getOriginalIndex();
+                case 1:
+                    return (int) reqResp.response().statusCode();
+                case 2:
+                    return reqResp.response().body().length();
+                case 3:
+                    // Extract Content-Type header
+                    return reqResp.response().headers().stream()
+                            .filter(h -> h.name().equalsIgnoreCase("Content-Type"))
+                            .map(h -> h.value())
+                            .findFirst()
+                            .orElse("N/A");
+                default:
+                    return null;
+            }
+        }
+    
+        public void setRequestResponses(List<RequestResponseNode> requestResponses) {
+            this.requestResponses = new ArrayList<>(requestResponses);
+            fireTableDataChanged();
+        }
+    
+        public RequestResponseNode getRequestResponseAt(int rowIndex) {
+            if (rowIndex >= 0 && rowIndex < requestResponses.size()) {
+                return requestResponses.get(rowIndex);
+            }
+            return null;
+        }
+    }    
+    class RequestResponseNode {
+        private final HttpRequestResponse requestResponse;
+        private final int originalIndex;
+    
+        public RequestResponseNode(HttpRequestResponse requestResponse, int originalIndex) {
+            this.requestResponse = requestResponse;
+            this.originalIndex = originalIndex;
+        }
+    
+        public HttpRequestResponse getRequestResponse() {
+            return requestResponse;
+        }
+    
+                public int getOriginalIndex() {
+                    return originalIndex;
+                }
             }
             
-            @Override
-            protected void process(List<String> chunks) {
-                statusLabel.setText(chunks.get(chunks.size() - 1));
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    api.logging().logToOutput("Clustering complete. Entering done() method.");
-                    Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> result = get();
-                    api.logging().logToOutput("Result received with " + result.size() + " clusters.");
+            class ClusterTreeCellRenderer extends DefaultTreeCellRenderer {
+                private Font boldFont;
+            
+                @Override
+                public Component getTreeCellRendererComponent(JTree tree, Object value, boolean sel, boolean expanded, boolean leaf, int row, boolean hasFocus) {
+                    super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus);
+            
+                    if (boldFont == null) {
+                        // Derive a new font that is larger and bold
+                        boldFont = getFont().deriveFont(Font.BOLD, getFont().getSize() + 2f);
+                    }
+                    setFont(boldFont);
                     
-                    displayResults(result);
-                    api.logging().logToOutput("displayResults() method completed.");
-
-                    cardLayout.show(mainPanel, "results");
-                    api.logging().logToOutput("Switched to results panel.");
-
-                } catch (InterruptedException | ExecutionException e) {
-                    api.logging().logToError(e);
-                    api.logging().logToOutput("Error during clustering: " + e.getMessage());
-                    statusLabel.setText("Error during clustering: " + e.getMessage());
+                    return this;
                 }
             }
-        };
-        worker.execute();
-    }
-
-    private void displayResults(Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> clusteredResponses) {
-        DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("Root");
-
-        long totalItems = clusteredResponses.values().stream().mapToLong(List::size).sum();
-        resultsLabel.setText("Clustering Results (" + totalItems + " total items)");
-
-        clusteredResponses.entrySet().stream()
-            .sorted(Map.Entry.comparingByKey())
-            .forEach(entry -> {
-                int clusterId = entry.getKey();
-                List<ClusteringEngine.IndexedHttpRequestResponse> responsesInCluster = entry.getValue();
-                String nodeText = (clusterId == -1 ? "Outliers" : "Cluster " + clusterId)
-                                  + " (" + responsesInCluster.size() + " items)";
-                
-                DefaultMutableTreeNode clusterNode = new DefaultMutableTreeNode(nodeText);
-                
-                for (ClusteringEngine.IndexedHttpRequestResponse indexedReqResp : responsesInCluster) {
-                    // Use the original index from IndexedHttpRequestResponse
-                    RequestResponseNode nodeObject = new RequestResponseNode(indexedReqResp.getRequestResponse(), indexedReqResp.getOriginalIndex());
-                    DefaultMutableTreeNode requestNode = new DefaultMutableTreeNode(nodeObject);
-                    clusterNode.add(requestNode);
-                }
-                rootNode.add(clusterNode);
-            });
-        
-        treeModel.setRoot(rootNode);
-
-        // Schedule collapsing on the AWT Event Dispatch Thread
-        SwingUtilities.invokeLater(() -> {
-            for (int i = 0; i < rootNode.getChildCount(); i++) {
-                clusterTree.collapsePath(clusterTree.getPathForRow(i));
-            }
-        });
-    }
-}
-
-class RequestResponseNode {
-    private final HttpRequestResponse requestResponse;
-    private final int originalIndex;
-
-    public RequestResponseNode(HttpRequestResponse requestResponse, int originalIndex) {
-        this.requestResponse = requestResponse;
-        this.originalIndex = originalIndex;
-    }
-
-    public HttpRequestResponse getRequestResponse() {
-        return requestResponse;
-    }
-
-    @Override
-    public String toString() {
-        // Return the original index
-        return "Request " + originalIndex; // Displaying 0-based index
-    }
-}
-
-class ClusterTreeCellRenderer extends DefaultTreeCellRenderer {
-    private Font defaultFont;
-    private Font boldFont;
-
-    @Override
-    public Component getTreeCellRendererComponent(JTree tree, Object value, boolean sel, boolean expanded, boolean leaf, int row, boolean hasFocus) {
-        super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus);
-
-        // Lazy initialization is safer than initializing in the constructor
-        if (boldFont == null) {
-            defaultFont = getFont();
-            if (defaultFont == null) { // Defensive check
-                defaultFont = new Font("SansSerif", Font.PLAIN, 12);
-            }
-            boldFont = new Font(defaultFont.getName(), Font.BOLD, defaultFont.getSize() + 2);
-        }
-
-        // Apply custom styling only to the top-level cluster nodes
-        if (value instanceof DefaultMutableTreeNode) {
-            DefaultMutableTreeNode node = (DefaultMutableTreeNode) value;
-            if (!leaf) {
-                if (expanded) {
-                    setIcon(UIManager.getIcon("Tree.expandedIcon"));
-                } else {
-                    setIcon(UIManager.getIcon("Tree.collapsedIcon"));
-                }
-            } else { // Leaf node (individual request)
-                setIcon(null);
-            }
-
-            if (node.getParent() == tree.getModel().getRoot() && node.getChildCount() > 0) {
-                setFont(boldFont);
-                setBackgroundNonSelectionColor(new Color(235, 235, 255)); // Lighter background
-            } else {
-                setFont(defaultFont);
-                // Use the default L&F color for child nodes
-                setBackgroundNonSelectionColor(UIManager.getColor("Tree.background"));
-            }
-        }
-        return this;
-    }
-}

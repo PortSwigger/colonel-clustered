@@ -42,13 +42,22 @@ This hybrid approach provides the best of all worlds: the speed of a single-pass
     - Select one or more request/response items.
     - Right-click and select **"Send to Colonel Clustered"**.
 
-3.  **Analyze the Results**:
-    - The "Colonel Clustered" tab will automatically start processing.
-    - The UI will display the clusters in a tree on the left. Groups with the fewest members (especially "Outliers") are often the most interesting.
-    - Click on any individual request in the tree to view its full request and response in the viewers on the right.
+3.  **Analyze the Results in the Quad-Pane UI**:
+    - The "Colonel Clustered" tab uses a powerful four-pane layout to help you quickly navigate results.
+    - **Top-Left (Clusters)**: This pane shows a high-level list of all clusters found, including a special "Outliers" group. Each entry shows the number of items in that cluster.
+    - **Bottom-Left (Cluster Contents)**: Click on a cluster in the pane above to see all of its members displayed in this table. The table features several columns:
+        - `Request/Response Pair`: The original index of the item.
+        - `Status Code`: The HTTP response status code.
+        - `Length`: The length of the response body in bytes.
+        - `Content-Type`: The `Content-Type` header of the response.
+    - **Sorting**: Click on any column header in the table to sort the items within that cluster, allowing you to easily find the largest/smallest responses, or group by status code.
+    - **Top-Right & Bottom-Right (Viewers)**: Select any row in the table to view its full request and response in the viewers on the right.
 
 ## Screenshots
+
+*(Note: The screenshots below are from an older version and do not reflect the current quad-pane UI.)*
 <img width="1242" height="725" alt="Screenshot 2025-12-24 8 14 13 PM" src="https://github.com/user-attachments/assets/4aaae005-2c12-4166-b186-6da76a49a3b4" />
+
 
 <img width="1172" height="879" alt="Screenshot 2025-12-24 8 11 49 PM" src="https://github.com/user-attachments/assets/54d8fda2-bc23-4956-86d2-62565c4132f9" />
 
