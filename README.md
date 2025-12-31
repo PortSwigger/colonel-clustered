@@ -10,25 +10,29 @@ Colonel Clustered solves this by analyzing the entire content of every response 
 
 ## How It Works
 
-Colonel Clustered uses a high-performance, multi-stage hybrid algorithm to provide fast and accurate clustering without requiring any manual tuning.
+Colonel Clustered now uses a high-performance, **dual-algorithm approach** to provide fast, accurate, and flexible clustering without requiring any manual tuning.
 
 1.  **Content-Aware Tokenization**: The extension first inspects the `Content-Type` header of each response to apply the most intelligent tokenization strategy:
-    -   **HTML**: Strips all tags and scripts, then tokenizes the visible text content.
+    -   **HTML**: Strips all tags and scripts, then generates character-based 5-grams on the visible text. This includes sanitizing digits to ensure resilience to minor variations (like IDs) in templated content.
     -   **JSON**: Extracts all string and numeric values as tokens.
-    -   **Text**: Performs a generic split on non-alphanumeric characters (whitespace, punctuation).
+    -   **Text**: Generates character-based 5-grams on plain text content, also sanitizing digits for template resilience.
     -   **Binary/Other**: If the content is not text-based, it generates a set of 5-byte n-grams to find similarities in the binary data.
 
 2.  **High-Performance Pre-Grouping**: To remain fast even with thousands of responses, the extension performs a single pass to group all *perfectly identical* responses. It calculates a hash of each response's token set and groups all items that share the same hash. This means the expensive clustering algorithm only has to run on the much smaller set of *unique* response bodies.
 
-3.  **Self-Tuning Hierarchical Clustering**: The set of unique responses is then clustered using a custom agglomerative hierarchical algorithm:
-    -   First, a similarity matrix is built by calculating the Jaccard distance between every pair of unique responses.
-    -   The algorithm then iteratively merges the most similar clusters. It records the distance at which each merge occurs.
-    -   **Automatic Threshold Detection**: To find the "best" number of clusters, the algorithm analyzes the list of merge distances and finds the largest "jump" or "elbow." This point represents the most natural place to stop merging, automatically adapting the clustering granularity to the dataset.
-    -   **Needle-in-a-Haystack Detection**: A special rule handles cases with only two highly dissimilar unique responses, ensuring that clear outliers are always separated.
+3.  **Dual Clustering Algorithms**: Colonel Clustered offers two distinct clustering algorithms:
 
-4.  **Outlier Consolidation**: After the best clustering is determined, any resulting cluster containing only a single unique member is considered an outlier. All such outliers are then consolidated into a single, convenient "Outliers" group in the UI.
+    *   **Fast Scan (Default)**: A high-performance `DBSCAN`-based algorithm runs automatically.
+        -   **Automatic Epsilon Tuning**: It uses the Kneedle algorithm to automatically determine the optimal `epsilon` (density radius), adapting to the dataset's characteristics.
+        -   **Outlier Detection (minPts=2)**: `minPts` is fixed at 2, making it highly effective for identifying responses that are unique or share similarity with only one other item, ensuring sensitive outlier detection.
 
-This hybrid approach provides the best of all worlds: the speed of a single-pass algorithm, the intelligence of content-aware analysis, and the power of a self-tuning hierarchical clustering model to find a natural and useful balance of clusters for any given dataset.
+    *   **Deep Analysis (Manual Trigger)**: The original, more computationally intensive hierarchical clustering algorithm is available via a "Deep Analysis" button. This option is designed for scenarios requiring a more granular and potentially different clustering perspective.
+        -   It constructs a similarity matrix using Jaccard distance between unique responses.
+        -   It iteratively merges the most similar clusters, recording merge distances to determine optimal thresholds.
+
+4.  **Outlier Consolidation**: After clustering, any resulting group containing only a single unique member is considered an outlier. All such outliers are then consolidated into a single, convenient "Outliers" group in the UI.
+
+This hybrid approach, with intelligent tokenization and dual clustering strategies, provides powerful and flexible outlier detection for various security testing scenarios.
 
 ## How to Use
 
@@ -41,8 +45,13 @@ This hybrid approach provides the best of all worlds: the speed of a single-pass
     - Go to any tool in Burp, such as Intruder results or Proxy history.
     - Select one or more request/response items.
     - Right-click and select **"Send to Colonel Clustered"**.
+    - By default, a **Fast Scan** (DBSCAN) will automatically run.
 
-3.  **Analyze the Results in the Quad-Pane UI**:
+3.  **Perform Deep Analysis (Optional)**:
+    - If a more detailed, hierarchical clustering is desired, click the **"Deep Analysis"** button within the "Col. Clustered" tab.
+    - A progress bar will appear directly within the tab, allowing you to monitor the analysis without blocking the main Burp Suite UI.
+
+4.  **Analyze the Results in the Quad-Pane UI**:
     - The "Colonel Clustered" tab uses a powerful four-pane layout to help you quickly navigate results.
     - **Top-Left (Clusters)**: This pane shows a high-level list of all clusters found, including a special "Outliers" group. Each entry shows the number of items in that cluster.
     - **Bottom-Left (Cluster Contents)**: Click on a cluster in the pane above to see all of its members displayed in this table. The table features several columns:
@@ -55,7 +64,7 @@ This hybrid approach provides the best of all worlds: the speed of a single-pass
 
 ## Screenshots
 
-*(Note: The screenshots below are from an older version and do not reflect the current quad-pane UI.)*
+*(Note: The screenshots below are from an older version and do not reflect the current quad-pane UI. **New screenshots are needed!**)*
 <img width="1242" height="725" alt="Screenshot 2025-12-24 8 14 13 PM" src="https://github.com/user-attachments/assets/4aaae005-2c12-4166-b186-6da76a49a3b4" />
 
 
