@@ -75,7 +75,7 @@ This hybrid approach, with intelligent tokenization and dual clustering strategi
 
 ## Building from Source
 
-This project uses Gradle.
+This project uses Gradle. You need JDK version 17 installed to build the plugin. 
 
 1.  Clone the repository:
     ```bash
