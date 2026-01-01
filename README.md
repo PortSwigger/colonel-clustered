@@ -14,7 +14,7 @@ Colonel Clustered now uses a high-performance, **dual-algorithm approach** to pr
 
 1.  **Content-Aware Tokenization**: The extension first inspects the `Content-Type` header of each response to apply the most intelligent tokenization strategy:
     -   **HTML**: Strips all tags and scripts, then generates character-based 5-grams on the visible text. This includes sanitizing digits to ensure resilience to minor variations (like IDs) in templated content.
-    -   **JSON**: Extracts all string and numeric values as tokens.
+    -   **JSON**: Extracts all keys and their nested paths as tokens, ignoring values. For arrays, it analyzes the structure of all contained objects.
     -   **Text**: Generates character-based 5-grams on plain text content, also sanitizing digits for template resilience.
     -   **Binary/Other**: If the content is not text-based, it generates a set of 5-byte n-grams to find similarities in the binary data.
 
@@ -26,7 +26,7 @@ Colonel Clustered now uses a high-performance, **dual-algorithm approach** to pr
         -   **Automatic Epsilon Tuning**: It uses the Kneedle algorithm to automatically determine the optimal `epsilon` (density radius), adapting to the dataset's characteristics.
         -   **Outlier Detection (minPts=2)**: `minPts` is fixed at 2, making it highly effective for identifying responses that are unique or share similarity with only one other item, ensuring sensitive outlier detection.
 
-    *   **Deep Analysis (Manual Trigger)**: The original, more computationally intensive hierarchical clustering algorithm is available via a "Deep Analysis" button. This option is designed for scenarios requiring a more granular and potentially different clustering perspective.
+    *   **Deep Analysis (Manual Trigger)**: The original, more computationally intensive hierarchical clustering algorithm is available via a "Deep Analysis" button. This option is designed for scenarios requiring a more granular and potentially different clustering perspective, utilizing **Average Linkage** for improved cluster cohesion.
         -   It constructs a similarity matrix using Jaccard distance between unique responses.
         -   It iteratively merges the most similar clusters, recording merge distances to determine optimal thresholds.
 
@@ -84,7 +84,7 @@ This project uses Gradle. You need JDK version 17 installed to build the plugin.
     ```
 2.  Build the fat JAR:
     ```bash
-    ./gradlew shadowJar
+    ./gradlew build
     ```
 3.  The compiled JAR will be located at `build/libs/ColonelClustered.jar`.
 

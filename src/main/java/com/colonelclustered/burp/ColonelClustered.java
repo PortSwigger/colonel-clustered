@@ -80,7 +80,7 @@ class ColonelClusteredTab extends JPanel {
 
     public ColonelClusteredTab(MontoyaApi api) {
         this.api = api;
-        this.clusteringEngine = new ClusteringEngine();
+        this.clusteringEngine = new ClusteringEngine(api);
         this.clusterNodeData = new HashMap<>();
         cardLayout = new CardLayout();
         mainPanel = new JPanel(cardLayout);
@@ -91,22 +91,32 @@ class ColonelClusteredTab extends JPanel {
         mainPanel.add(statusPanel, "status");
 
         // --- Deep Analysis Progress Panel ---
-        JPanel deepAnalysisPanel = new JPanel(new BorderLayout(10, 10));
+        JPanel deepAnalysisPanel = new JPanel(new GridBagLayout());
         deepAnalysisPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+
+        JPanel container = new JPanel(new BorderLayout(10, 10));
+
         deepAnalysisStatusLabel = new JLabel("Starting deep analysis...", SwingConstants.CENTER);
         deepAnalysisProgressBar = new JProgressBar(0, 100);
         deepAnalysisProgressBar.setStringPainted(true);
+        
+        JPanel progressCenterPanel = new JPanel();
+        progressCenterPanel.setLayout(new BoxLayout(progressCenterPanel, BoxLayout.Y_AXIS));
+        progressCenterPanel.add(deepAnalysisStatusLabel);
+        progressCenterPanel.add(Box.createRigidArea(new Dimension(0, 5)));
+        progressCenterPanel.add(deepAnalysisProgressBar);
+        
+        container.add(progressCenterPanel, BorderLayout.CENTER);
+
         JButton cancelDeepAnalysisButton = new JButton("Cancel");
         cancelDeepAnalysisButton.addActionListener(e -> {
             if (deepAnalysisWorker != null) {
                 deepAnalysisWorker.cancel(true);
             }
         });
-        JPanel progressCenterPanel = new JPanel(new GridLayout(2, 1, 10, 10));
-        progressCenterPanel.add(deepAnalysisStatusLabel);
-        progressCenterPanel.add(deepAnalysisProgressBar);
-        deepAnalysisPanel.add(progressCenterPanel, BorderLayout.CENTER);
-        deepAnalysisPanel.add(cancelDeepAnalysisButton, BorderLayout.SOUTH);
+        container.add(cancelDeepAnalysisButton, BorderLayout.SOUTH);
+
+        deepAnalysisPanel.add(container, new GridBagConstraints());
         mainPanel.add(deepAnalysisPanel, "deepProgress");
 
         // --- Results Panel ---
@@ -248,7 +258,7 @@ class ColonelClusteredTab extends JPanel {
         SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> worker = new SwingWorker<>() {
             @Override
             protected Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> doInBackground() {
-                return clusteringEngine.clusterResponses(requestResponses, api, this::publish);
+                return clusteringEngine.clusterResponses(requestResponses, this::publish);
             }
 
             @Override
@@ -289,7 +299,7 @@ class ColonelClusteredTab extends JPanel {
         deepAnalysisWorker = new SwingWorker<>() {
             @Override
             protected Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> doInBackground() throws Exception {
-                return clusteringEngine.runDeepClustering(currentRequestResponses, api, this::publish);
+                return clusteringEngine.runDeepClustering(currentRequestResponses, this::publish);
             }
 
             @Override

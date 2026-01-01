@@ -19,18 +19,24 @@ public class ClusteringEngine {
     private static class TokenSetPoint implements Clusterable {
         private final int id;
         private final Set<Integer> tokenSet;
-        public TokenSetPoint(int id, Set<Integer> tokenSet) { this.id = id; this.tokenSet = tokenSet; }
+        private final int tokenSetHash;
+
+        public TokenSetPoint(int id, Set<Integer> tokenSet) {
+            this.id = id;
+            this.tokenSet = tokenSet;
+            this.tokenSetHash = tokenSet.hashCode();
+        }
+
         public int getId() { return id; }
         public Set<Integer> getTokenSet() { return tokenSet; }
+        public int getTokenSetHash() { return tokenSetHash; }
         @Override public double[] getPoint() { return new double[0]; }
     }
 
     private class JaccardDistance implements DistanceMeasure {
-        private final Map<String, Double> cache = new ConcurrentHashMap<>();
         @Override public double compute(double[] a, double[] b) { return 0; }
         public double distance(TokenSetPoint p1, TokenSetPoint p2) {
-            String cacheKey = p1.getId() < p2.getId() ? p1.getId() + "-" + p2.getId() : p2.getId() + "-" + p1.getId();
-            return cache.computeIfAbsent(cacheKey, k -> calculateJaccardDistance(p1.getTokenSet(), p2.getTokenSet()));
+            return calculateJaccardDistance(p1.getTokenSet(), p2.getTokenSet());
         }
     }
 
@@ -43,16 +49,18 @@ public class ClusteringEngine {
     }
 
     private final TokenizerFactory tokenizerFactory;
+    private final MontoyaApi api;
 
-    public ClusteringEngine() {
-        this.tokenizerFactory = new TokenizerFactory();
+    public ClusteringEngine(MontoyaApi api) {
+        this.api = api;
+        this.tokenizerFactory = new TokenizerFactory(api);
     }
     
-    public Map<Integer, List<IndexedHttpRequestResponse>> clusterResponses(List<HttpRequestResponse> requestResponses, MontoyaApi api, Consumer<String> progressCallback) {
-        return runFastClustering(requestResponses, api, progressCallback);
+    public Map<Integer, List<IndexedHttpRequestResponse>> clusterResponses(List<HttpRequestResponse> requestResponses, Consumer<String> progressCallback) {
+        return runFastClustering(requestResponses, progressCallback);
     }
 
-    public Map<Integer, List<IndexedHttpRequestResponse>> runFastClustering(List<HttpRequestResponse> requestResponses, MontoyaApi api, Consumer<String> progressCallback) {
+    public Map<Integer, List<IndexedHttpRequestResponse>> runFastClustering(List<HttpRequestResponse> requestResponses, Consumer<String> progressCallback) {
         if (requestResponses.size() < 2) { return Collections.emptyMap(); }
 
         progressCallback.accept("Step 1/3: Pre-processing...");
@@ -229,10 +237,10 @@ public class ClusteringEngine {
         for (List<TokenSetPoint> cluster : result.clusters) {
             List<IndexedHttpRequestResponse> fullClusterMembers = new ArrayList<>();
             for (TokenSetPoint point : cluster) {
-                int uniqueIndex = point.getId();
-                int targetHash = data.hashToUniqueIndex.entrySet().stream().filter(entry -> entry.getValue().equals(uniqueIndex)).map(Map.Entry::getKey).findFirst().orElse(-1);
-                if (targetHash != -1) {
-                    for (int originalIndex : data.hashToOriginalIndices.get(targetHash)) {
+                int targetHash = point.getTokenSetHash();
+                List<Integer> originalIndices = data.hashToOriginalIndices.get(targetHash);
+                if (originalIndices != null) {
+                    for (int originalIndex : originalIndices) {
                         fullClusterMembers.add(new IndexedHttpRequestResponse(requestResponses.get(originalIndex), originalIndex));
                     }
                 }
@@ -241,10 +249,10 @@ public class ClusteringEngine {
         }
         
         for (TokenSetPoint point : result.noise) {
-            int uniqueIndex = point.getId();
-            int targetHash = data.hashToUniqueIndex.entrySet().stream().filter(entry -> entry.getValue().equals(uniqueIndex)).map(Map.Entry::getKey).findFirst().orElse(-1);
-            if (targetHash != -1) {
-                for (int originalIndex : data.hashToOriginalIndices.get(targetHash)) {
+            int targetHash = point.getTokenSetHash();
+            List<Integer> originalIndices = data.hashToOriginalIndices.get(targetHash);
+            if (originalIndices != null) {
+                for (int originalIndex : originalIndices) {
                     outliers.add(new IndexedHttpRequestResponse(requestResponses.get(originalIndex), originalIndex));
                 }
             }
@@ -256,7 +264,7 @@ public class ClusteringEngine {
         return finalClusteredResponses;
     }
 
-    public Map<Integer, List<IndexedHttpRequestResponse>> runDeepClustering(List<HttpRequestResponse> requestResponses, MontoyaApi api, Consumer<String> progressCallback) throws InterruptedException {
+    public Map<Integer, List<IndexedHttpRequestResponse>> runDeepClustering(List<HttpRequestResponse> requestResponses, Consumer<String> progressCallback) throws InterruptedException {
         if (requestResponses.size() < 2) return Collections.emptyMap();
         progressCallback.accept("Preprocessing...|5");
         PreprocessedData data = preprocessResponses(requestResponses);
@@ -277,7 +285,7 @@ public class ClusteringEngine {
             progressCallback.accept("Calculating distance matrix...|" + percent);
         }
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-        List<Set<Integer>> bestClustering = findBestClustering(distanceMatrix, api, (status, percent) -> {
+        List<Set<Integer>> bestClustering = findBestClustering(distanceMatrix, (status, percent) -> {
             progressCallback.accept(status + "|" + percent);
         });
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
@@ -318,14 +326,17 @@ public class ClusteringEngine {
         return 1.0 - ((double) intersection.size() / union.size());
     }
     
-    private List<Set<Integer>> findBestClustering(double[][] distanceMatrix, MontoyaApi api, BiConsumer<String, Integer> progressCallback) throws InterruptedException {
+    private List<Set<Integer>> findBestClustering(double[][] distanceMatrix, BiConsumer<String, Integer> progressCallback) throws InterruptedException {
         List<Set<Integer>> clusters = new ArrayList<>();
         for (int i = 0; i < distanceMatrix.length; i++) {
             clusters.add(new HashSet<>(Collections.singletonList(i)));
         }
         if (clusters.size() <= 1) return clusters;
-        List<Double> mergeDistances = new ArrayList<>();
+
         List<Set<Integer>> originalClusters = clusters.stream().map(HashSet::new).collect(Collectors.toList());
+        List<Double> mergeDistances = new ArrayList<>();
+        List<List<Set<Integer>>> clusterHistory = new ArrayList<>();
+
         int totalMerges = clusters.size() - 1;
         int mergesCompleted = 0;
         while (clusters.size() > 1) {
@@ -334,7 +345,7 @@ public class ClusteringEngine {
             int c1Idx = -1, c2Idx = -1;
             for (int i = 0; i < clusters.size(); i++) {
                 for (int j = i + 1; j < clusters.size(); j++) {
-                    double currentMinClusterDistance = findMinClusterDistance(clusters.get(i), clusters.get(j), distanceMatrix);
+                    double currentMinClusterDistance = findAverageClusterDistance(clusters.get(i), clusters.get(j), distanceMatrix);
                     if (currentMinClusterDistance < minDistance) {
                         minDistance = currentMinClusterDistance; c1Idx = i; c2Idx = j;
                     }
@@ -346,6 +357,9 @@ public class ClusteringEngine {
                 merged.addAll(clusters.get(c2Idx));
                 clusters.remove(c2Idx); clusters.remove(c1Idx);
                 clusters.add(merged);
+
+                clusterHistory.add(clusters.stream().map(HashSet::new).collect(Collectors.toList()));
+
                 mergesCompleted++;
                 int percent = 35 + (int)(60.0 * mergesCompleted / totalMerges);
                 progressCallback.accept("Clustering...", percent);
@@ -353,44 +367,44 @@ public class ClusteringEngine {
                 break;
             }
         }
-        double optimalThreshold = 0.5;
-        if (!mergeDistances.isEmpty()) {
-            double maxJump = 0;
-            int bestCutIndex = -1;
-            for (int i = 0; i < mergeDistances.size() - 1; i++) {
-                double jump = mergeDistances.get(i + 1) - mergeDistances.get(i);
-                if (jump > maxJump) { maxJump = jump; bestCutIndex = i; }
-            }
-            optimalThreshold = (bestCutIndex != -1) ? mergeDistances.get(bestCutIndex) + 0.0001 : mergeDistances.get(mergeDistances.size() - 1) + 0.0001;
+
+        if (mergeDistances.isEmpty()) {
+            return originalClusters;
         }
+
+        double maxJump = 0;
+        int bestCutIndex = -1;
+        for (int i = 0; i < mergeDistances.size() - 1; i++) {
+            double jump = mergeDistances.get(i + 1) - mergeDistances.get(i);
+            if (jump > maxJump) { maxJump = jump; bestCutIndex = i; }
+        }
+
+        double optimalThreshold = (bestCutIndex != -1) ? mergeDistances.get(bestCutIndex) + 0.0001 : mergeDistances.get(mergeDistances.size() - 1) + 0.0001;
         api.logging().logToOutput("Automatically determined merge threshold: " + String.format("%.4f", optimalThreshold));
+
         if (distanceMatrix.length == 2 && distanceMatrix[0][1] > 0.1) {
              api.logging().logToOutput("Sanity check triggered: Forcing two clusters for high-distance pair.");
              return originalClusters;
         }
-        clusters = originalClusters.stream().map(HashSet::new).collect(Collectors.toList());
-        while (true) {
-            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
-            double minDistance = Double.MAX_VALUE;
-            int c1Idx = -1, c2Idx = -1;
-            for (int i = 0; i < clusters.size(); i++) {
-                for (int j = i + 1; j < clusters.size(); j++) {
-                    double d = findMinClusterDistance(clusters.get(i), clusters.get(j), distanceMatrix);
-                    if (d < minDistance) { minDistance = d; c1Idx = i; c2Idx = j; }
-                }
-            }
-            if (minDistance >= optimalThreshold || c1Idx == -1) break;
-            Set<Integer> merged = new HashSet<>(clusters.get(c1Idx));
-            merged.addAll(clusters.get(c2Idx));
-            clusters.remove(c2Idx); clusters.remove(c1Idx);
-            clusters.add(merged);
+
+        if (bestCutIndex != -1) {
+            return clusterHistory.get(bestCutIndex);
+        } else {
+            // No significant jump, fall back to a single cluster if distances are close.
+            // This is the state after the last merge.
+            return clusterHistory.get(clusterHistory.size() - 1);
         }
-        return clusters;
     }
 
-    private double findMinClusterDistance(Set<Integer> c1, Set<Integer> c2, double[][] distanceMatrix) {
-        double min = Double.MAX_VALUE;
-        for (int p1 : c1) for (int p2 : c2) min = Math.min(min, distanceMatrix[p1][p2]);
-        return min;
+    private double findAverageClusterDistance(Set<Integer> c1, Set<Integer> c2, double[][] distanceMatrix) {
+        double totalDistance = 0;
+        int pairCount = 0;
+        for (int p1 : c1) {
+            for (int p2 : c2) {
+                totalDistance += distanceMatrix[p1][p2];
+                pairCount++;
+            }
+        }
+        return pairCount > 0 ? totalDistance / pairCount : Double.MAX_VALUE;
     }
 }
