@@ -9,6 +9,8 @@ import org.apache.commons.math3.ml.distance.DistanceMeasure;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -50,21 +52,37 @@ public class ClusteringEngine {
 
     private final TokenizerFactory tokenizerFactory;
     private final MontoyaApi api;
+    private final AtomicBoolean cancellationFlag = new AtomicBoolean(false);
 
     public ClusteringEngine(MontoyaApi api) {
         this.api = api;
         this.tokenizerFactory = new TokenizerFactory(api);
     }
-    
-    public Map<Integer, List<IndexedHttpRequestResponse>> clusterResponses(List<HttpRequestResponse> requestResponses, Consumer<String> progressCallback) {
-        return runFastClustering(requestResponses, progressCallback);
+
+    public void start() {
+        cancellationFlag.set(false);
     }
 
-    public Map<Integer, List<IndexedHttpRequestResponse>> runFastClustering(List<HttpRequestResponse> requestResponses, Consumer<String> progressCallback) {
+    public void cancel() {
+        cancellationFlag.set(true);
+    }
+    
+    public Map<Integer, List<IndexedHttpRequestResponse>> clusterResponses(List<HttpRequestResponse> requestResponses, Consumer<String> progressCallback) {
+        try {
+            return runFastClustering(requestResponses, progressCallback);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // Preserve interrupted status
+            api.logging().logToOutput("Fast clustering was cancelled.");
+            return Collections.emptyMap();
+        }
+    }
+
+    public Map<Integer, List<IndexedHttpRequestResponse>> runFastClustering(List<HttpRequestResponse> requestResponses, Consumer<String> progressCallback) throws InterruptedException {
         if (requestResponses.size() < 2) { return Collections.emptyMap(); }
 
-        progressCallback.accept("Step 1/3: Pre-processing...");
+        progressCallback.accept("Step 1/4: Pre-processing...|5");
         PreprocessedData data = preprocessResponses(requestResponses);
+        if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled during pre-processing.");
         api.logging().logToOutput("Found " + data.uniqueTokenSets.size() + " unique response bodies.");
 
         if (data.uniqueTokenSets.size() < 2) {
@@ -73,20 +91,26 @@ public class ClusteringEngine {
                 .collect(Collectors.toList()));
         }
         
-        progressCallback.accept("Step 2/3: Auto-tuning...");
+        progressCallback.accept("Step 2/4: Auto-tuning...|15");
         List<TokenSetPoint> points = IntStream.range(0, data.uniqueTokenSets.size())
                 .mapToObj(i -> new TokenSetPoint(i, data.uniqueTokenSets.get(i)))
                 .collect(Collectors.toList());
+        if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled during auto-tuning.");
         
         int minPts = 2;
         List<Double> kDistances = calculateKDistances(points, minPts);
         double epsilon = estimateEpsilonFromElbow(kDistances, api);
-        
-        DbscanResult result = dbscan(points, epsilon, minPts, new JaccardDistance());
+        if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled during auto-tuning.");
+
+        progressCallback.accept("Step 3/4: Clustering (DBSCAN)...|20");
+        DbscanResult result = dbscan(points, epsilon, minPts, new JaccardDistance(), (percent) -> {
+            progressCallback.accept("Step 3/4: Clustering (DBSCAN)...|" + (20 + (int)(percent * 0.7)));
+        });
+        if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled during DBSCAN.");
         
         api.logging().logToOutput("DBSCAN finished with " + result.clusters.size() + " clusters.");
 
-        progressCallback.accept("Step 3/3: Mapping results...");
+        progressCallback.accept("Step 4/4: Mapping results...|99");
         return mapResults(result, data, requestResponses);
     }
 
@@ -99,11 +123,15 @@ public class ClusteringEngine {
         }
     }
 
-    private DbscanResult dbscan(List<TokenSetPoint> points, double epsilon, int minPts, JaccardDistance dist) {
+    private DbscanResult dbscan(List<TokenSetPoint> points, double epsilon, int minPts, JaccardDistance dist, Consumer<Integer> progressCallback) throws InterruptedException {
         List<List<TokenSetPoint>> clusters = new ArrayList<>();
         Map<TokenSetPoint, PointStatus> statusMap = new HashMap<>();
+        int pointsProcessed = 0;
 
         for (TokenSetPoint point : points) {
+            if (cancellationFlag.get()) {
+                throw new InterruptedException("DBSCAN process cancelled by user.");
+            }
             if (statusMap.get(point) == PointStatus.VISITED) {
                 continue;
             }
@@ -117,6 +145,9 @@ public class ClusteringEngine {
                 expandCluster(point, neighbors, newCluster, points, epsilon, minPts, dist, statusMap);
                 clusters.add(newCluster);
             }
+            pointsProcessed++;
+            int percent = (int)(100.0 * pointsProcessed / points.size());
+            progressCallback.accept(percent);
         }
         
         List<TokenSetPoint> noisePoints = statusMap.entrySet().stream()
@@ -127,11 +158,14 @@ public class ClusteringEngine {
         return new DbscanResult(clusters, noisePoints);
     }
 
-    private void expandCluster(TokenSetPoint point, List<TokenSetPoint> neighbors, List<TokenSetPoint> cluster, List<TokenSetPoint> points, double epsilon, int minPts, JaccardDistance dist, Map<TokenSetPoint, PointStatus> statusMap) {
+    private void expandCluster(TokenSetPoint point, List<TokenSetPoint> neighbors, List<TokenSetPoint> cluster, List<TokenSetPoint> points, double epsilon, int minPts, JaccardDistance dist, Map<TokenSetPoint, PointStatus> statusMap) throws InterruptedException {
         cluster.add(point);
         statusMap.put(point, PointStatus.PART_OF_CLUSTER);
 
         for (int i = 0; i < neighbors.size(); i++) {
+            if (cancellationFlag.get()) {
+                throw new InterruptedException("DBSCAN process cancelled by user.");
+            }
             TokenSetPoint currentNeighbor = neighbors.get(i);
             PointStatus pStatus = statusMap.get(currentNeighbor);
 
@@ -151,7 +185,9 @@ public class ClusteringEngine {
     }
 
     private List<TokenSetPoint> regionQuery(TokenSetPoint p, List<TokenSetPoint> points, double epsilon, JaccardDistance dist) {
-        return points.stream().filter(other -> p != other && dist.distance(p, other) <= epsilon).collect(Collectors.toList());
+        return points.parallelStream()
+                .filter(other -> !cancellationFlag.get() && p != other && dist.distance(p, other) <= epsilon)
+                .collect(Collectors.toList());
     }
 
     private enum PointStatus { VISITED, NOISE, PART_OF_CLUSTER }
@@ -164,6 +200,7 @@ public class ClusteringEngine {
         final ConcurrentHashMap<Integer, List<Integer>> hashToOriginalIndices = new ConcurrentHashMap<>();
         final ConcurrentHashMap<Integer, Set<Integer>> hashToUniqueTokenSet = new ConcurrentHashMap<>();
         IntStream.range(0, requestResponses.size()).parallel().forEach(originalIndex -> {
+            if (cancellationFlag.get()) return;
             HttpRequestResponse requestResponse = requestResponses.get(originalIndex);
             Set<String> stringTokens = tokenizerFactory.getTokenizer(requestResponse.response()).tokenize(requestResponse.response().body().getBytes());
             Set<Integer> intTokens = stringTokens.stream().map(vocabMap::get).collect(Collectors.toSet());
@@ -268,27 +305,47 @@ public class ClusteringEngine {
         if (requestResponses.size() < 2) return Collections.emptyMap();
         progressCallback.accept("Preprocessing...|5");
         PreprocessedData data = preprocessResponses(requestResponses);
-        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+        if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled during pre-processing.");
         api.logging().logToOutput("Found " + data.uniqueTokenSets.size() + " unique response bodies.");
         int numUnique = data.uniqueTokenSets.size();
+
+        Runtime runtime = Runtime.getRuntime();
+        long maxMemory = runtime.maxMemory();
+        long usedMemory = runtime.totalMemory() - runtime.freeMemory();
+        long availableMemory = maxMemory - usedMemory;
+        long requiredMemoryForMatrix = (long) numUnique * (long) numUnique * 8;
+
+        if (requiredMemoryForMatrix > availableMemory * 0.5) {
+            throw new InterruptedException("Insufficient memory for deep analysis distance matrix. Cancelling to prevent instability.");
+        }
+
         double[][] distanceMatrix = new double[numUnique][numUnique];
-        long totalDistanceCalcs = Math.max(1, (long)numUnique * (numUnique - 1) / 2);
-        long completedDistanceCalcs = 0;
-        for (int i = 0; i < numUnique; i++) {
-            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+        AtomicLong completedRows = new AtomicLong(0);
+
+        IntStream.range(0, numUnique).parallel().forEach(i -> {
+            if (cancellationFlag.get()) return;
+
+            if (i % 100 == 0) {
+                long currentUsedMemory = runtime.totalMemory() - runtime.freeMemory();
+                if (maxMemory - currentUsedMemory < maxMemory * 0.1) {
+                    cancellationFlag.set(true);
+                }
+            }
+
             for (int j = i + 1; j < numUnique; j++) {
                 double dist = calculateJaccardDistance(data.uniqueTokenSets.get(i), data.uniqueTokenSets.get(j));
                 distanceMatrix[i][j] = dist; distanceMatrix[j][i] = dist;
-                completedDistanceCalcs++;
             }
-            int percent = 5 + (int) (30.0 * completedDistanceCalcs / totalDistanceCalcs);
+            long rowsDone = completedRows.incrementAndGet();
+            int percent = 5 + (int) (30.0 * rowsDone / numUnique);
             progressCallback.accept("Calculating distance matrix...|" + percent);
-        }
-        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+        });
+
+        if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled due to low memory or user request.");
         List<Set<Integer>> bestClustering = findBestClustering(distanceMatrix, (status, percent) -> {
             progressCallback.accept(status + "|" + percent);
         });
-        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+        if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled during final clustering phase.");
         progressCallback.accept("Mapping results...|99");
         Map<Integer, List<IndexedHttpRequestResponse>> finalClusteredResponses = new HashMap<>();
         List<IndexedHttpRequestResponse> outliers = new ArrayList<>();
@@ -340,7 +397,7 @@ public class ClusteringEngine {
         int totalMerges = clusters.size() - 1;
         int mergesCompleted = 0;
         while (clusters.size() > 1) {
-            if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+            if (cancellationFlag.get()) throw new InterruptedException("Clustering cancelled during merge phase.");
             double minDistance = Double.MAX_VALUE;
             int c1Idx = -1, c2Idx = -1;
             for (int i = 0; i < clusters.size(); i++) {

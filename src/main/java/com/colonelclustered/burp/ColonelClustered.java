@@ -73,9 +73,9 @@ class ColonelClusteredTab extends JPanel {
     private Map<DefaultMutableTreeNode, List<RequestResponseNode>> clusterNodeData;
     private final JButton deepAnalysisButton;
     private List<HttpRequestResponse> currentRequestResponses;
-    private final JProgressBar deepAnalysisProgressBar;
-    private final JLabel deepAnalysisStatusLabel;
-    private SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> deepAnalysisWorker;
+    private final JProgressBar progressBar;
+    private final JLabel progressStatusLabel;
+    private SwingWorker<?, ?> currentWorker;
 
 
     public ColonelClusteredTab(MontoyaApi api) {
@@ -90,34 +90,32 @@ class ColonelClusteredTab extends JPanel {
         statusPanel.add(new JLabel("Waiting for analysis... Right-click items and 'Send to Colonel Clustered'."));
         mainPanel.add(statusPanel, "status");
 
-        // --- Deep Analysis Progress Panel ---
-        JPanel deepAnalysisPanel = new JPanel(new GridBagLayout());
-        deepAnalysisPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        // --- Generic Progress Panel ---
+        JPanel progressPanel = new JPanel(new GridBagLayout());
+        progressPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
 
         JPanel container = new JPanel(new BorderLayout(10, 10));
 
-        deepAnalysisStatusLabel = new JLabel("Starting deep analysis...", SwingConstants.CENTER);
-        deepAnalysisProgressBar = new JProgressBar(0, 100);
-        deepAnalysisProgressBar.setStringPainted(true);
+        progressStatusLabel = new JLabel("Starting analysis...", SwingConstants.CENTER);
+        progressBar = new JProgressBar(0, 100);
+        progressBar.setStringPainted(true);
         
         JPanel progressCenterPanel = new JPanel();
         progressCenterPanel.setLayout(new BoxLayout(progressCenterPanel, BoxLayout.Y_AXIS));
-        progressCenterPanel.add(deepAnalysisStatusLabel);
+        progressCenterPanel.add(progressStatusLabel);
         progressCenterPanel.add(Box.createRigidArea(new Dimension(0, 5)));
-        progressCenterPanel.add(deepAnalysisProgressBar);
+        progressCenterPanel.add(progressBar);
         
         container.add(progressCenterPanel, BorderLayout.CENTER);
 
-        JButton cancelDeepAnalysisButton = new JButton("Cancel");
-        cancelDeepAnalysisButton.addActionListener(e -> {
-            if (deepAnalysisWorker != null) {
-                deepAnalysisWorker.cancel(true);
-            }
+        JButton cancelAnalysisButton = new JButton("Cancel");
+        cancelAnalysisButton.addActionListener(e -> {
+            clusteringEngine.cancel();
         });
-        container.add(cancelDeepAnalysisButton, BorderLayout.SOUTH);
+        container.add(cancelAnalysisButton, BorderLayout.SOUTH);
 
-        deepAnalysisPanel.add(container, new GridBagConstraints());
-        mainPanel.add(deepAnalysisPanel, "deepProgress");
+        progressPanel.add(container, new GridBagConstraints());
+        mainPanel.add(progressPanel, "progress");
 
         // --- Results Panel ---
         JPanel resultsPanel = new JPanel(new BorderLayout());
@@ -250,10 +248,9 @@ class ColonelClusteredTab extends JPanel {
     public void processRequestResponses(List<HttpRequestResponse> requestResponses) {
         clearResults();
         this.currentRequestResponses = requestResponses;
-        cardLayout.show(mainPanel, "status");
-        JPanel statusPanel = (JPanel) mainPanel.getComponent(0);
-        JLabel statusLabel = (JLabel) statusPanel.getComponent(0);
-        statusLabel.setText("Starting fast clustering for " + requestResponses.size() + " items...");
+        cardLayout.show(mainPanel, "progress");
+        progressBar.setValue(0);
+        progressStatusLabel.setText("Starting fast clustering for " + requestResponses.size() + " items...");
 
         SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> worker = new SwingWorker<>() {
             @Override
@@ -263,7 +260,23 @@ class ColonelClusteredTab extends JPanel {
 
             @Override
             protected void process(List<String> chunks) {
-                statusLabel.setText(chunks.get(chunks.size() - 1));
+                if (chunks.isEmpty()) return;
+                String latestStatus = chunks.get(chunks.size() - 1);
+                
+                String[] parts = latestStatus.split("\\|");
+                if (parts.length == 2) {
+                    String message = parts[0];
+                    try {
+                        int percent = Integer.parseInt(parts[1]);
+                        progressStatusLabel.setText(message);
+                        progressBar.setValue(percent);
+                        progressBar.setString(percent + "%");
+                    } catch (NumberFormatException e) {
+                        progressStatusLabel.setText(message);
+                    }
+                } else {
+                    progressStatusLabel.setText(latestStatus);
+                }
             }
 
             @Override
@@ -271,17 +284,23 @@ class ColonelClusteredTab extends JPanel {
                 try {
                     Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> result = get();
                     displayResults(result);
-                    cardLayout.show(mainPanel, "results");
                     deepAnalysisButton.setEnabled(true);
                 } catch (InterruptedException | CancellationException e) {
                     api.logging().logToOutput("Fast clustering cancelled.");
-                    statusLabel.setText("Fast clustering cancelled.");
+                    resultsLabel.setText("Fast clustering cancelled.");
                 } catch (ExecutionException e) {
                     api.logging().logToError(e.getCause());
-                    statusLabel.setText("Error during clustering: " + e.getCause().getMessage());
+                    resultsLabel.setText("Error during clustering: " + e.getCause().getMessage());
+                    JOptionPane.showMessageDialog(mainPanel,
+                        "An error occurred during fast analysis: " + e.getCause().getMessage(),
+                        "Analysis Error", JOptionPane.ERROR_MESSAGE);
+                } finally {
+                    cardLayout.show(mainPanel, "results");
                 }
             }
         };
+        this.currentWorker = worker;
+        clusteringEngine.start();
         worker.execute();
     }
 
@@ -290,13 +309,30 @@ class ColonelClusteredTab extends JPanel {
             return;
         }
 
-        deepAnalysisButton.setEnabled(false);
-        cardLayout.show(mainPanel, "deepProgress");
-        
-        deepAnalysisProgressBar.setValue(0);
-        deepAnalysisStatusLabel.setText("Starting deep hierarchical analysis...");
+        int requestCount = currentRequestResponses.size();
+        if (requestCount > 2000) { // Example threshold
+            int choice = JOptionPane.showConfirmDialog(
+                this,
+                "You are about to run a deep analysis on " + requestCount + " items.\n" +
+                "This can be very slow and memory-intensive for a large number of items.\n\n" +
+                "Are you sure you want to continue?",
+                "Performance Warning",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE
+            );
 
-        deepAnalysisWorker = new SwingWorker<>() {
+            if (choice == JOptionPane.NO_OPTION) {
+                return; // User cancelled
+            }
+        }
+
+        deepAnalysisButton.setEnabled(false);
+        cardLayout.show(mainPanel, "progress");
+        
+        progressBar.setValue(0);
+        progressStatusLabel.setText("Starting deep hierarchical analysis...");
+
+        SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> deepAnalysisWorker = new SwingWorker<>() {
             @Override
             protected Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> doInBackground() throws Exception {
                 return clusteringEngine.runDeepClustering(currentRequestResponses, this::publish);
@@ -312,14 +348,14 @@ class ColonelClusteredTab extends JPanel {
                     String message = parts[0];
                     try {
                         int percent = Integer.parseInt(parts[1]);
-                        deepAnalysisStatusLabel.setText(message);
-                        deepAnalysisProgressBar.setValue(percent);
-                        deepAnalysisProgressBar.setString(percent + "%");
+                        progressStatusLabel.setText(message);
+                        progressBar.setValue(percent);
+                        progressBar.setString(percent + "%");
                     } catch (NumberFormatException e) {
-                        deepAnalysisStatusLabel.setText(message);
+                        progressStatusLabel.setText(message);
                     }
                 } else {
-                    deepAnalysisStatusLabel.setText(latestStatus);
+                    progressStatusLabel.setText(latestStatus);
                 }
             }
 
@@ -334,13 +370,12 @@ class ColonelClusteredTab extends JPanel {
                         api.logging().logToOutput("Deep analysis was cancelled by the user.");
                         resultsLabel.setText(resultsLabel.getText() + " (Deep analysis cancelled)");
                     }
-                } catch (InterruptedException e) {
+                } catch (InterruptedException | CancellationException e) {
                     api.logging().logToOutput("Deep analysis was cancelled by the user.");
                     resultsLabel.setText(resultsLabel.getText() + " (Deep analysis cancelled)");
-                } catch (CancellationException e) {
-                    // This is expected on cancel, log it but don't show a scary error.
-                    api.logging().logToOutput("Deep analysis was cancelled by the user.");
-                    resultsLabel.setText(resultsLabel.getText() + " (Deep analysis cancelled)");
+                    JOptionPane.showMessageDialog(mainPanel,
+                        e.getMessage(),
+                        "Analysis Cancelled", JOptionPane.WARNING_MESSAGE);
                 } catch (ExecutionException e) {
                     api.logging().logToError(e.getCause());
                     JOptionPane.showMessageDialog(mainPanel,
@@ -352,6 +387,8 @@ class ColonelClusteredTab extends JPanel {
                 }
             }
         };
+        this.currentWorker = deepAnalysisWorker;
+        clusteringEngine.start();
         deepAnalysisWorker.execute();
     }
 
