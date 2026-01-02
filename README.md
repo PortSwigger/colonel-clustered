@@ -34,6 +34,15 @@ Colonel Clustered now uses a high-performance, **dual-algorithm approach** to pr
 
 This hybrid approach, with intelligent tokenization and dual clustering strategies, provides powerful and flexible outlier detection for various security testing scenarios.
 
+### Performance and Safety Features
+
+To handle large datasets efficiently and prevent crashes, Colonel Clustered includes several key optimizations:
+
+*   **Multi-Core Processing**: Both the **Fast Scan** and **Deep Analysis** algorithms are now multi-threaded, utilizing all available CPU cores to significantly speed up the analysis of large numbers of unique responses.
+*   **Memory Safeguard**: Before starting a **Deep Analysis**, the extension checks if there is sufficient memory available. If allocating the required resources would risk an `OutOfMemoryError` and crash Burp Suite, the analysis is cancelled proactively with a warning.
+*   **Interactive Warnings**: For **Deep Analysis** scans on a large number of items (>2000), a confirmation dialog will appear, warning you of the potential for slow performance and high memory usage, giving you the option to proceed or cancel.
+*   **Responsive UI**: All clustering tasks now run in the background with a progress bar and a responsive **Cancel** button, ensuring the Burp Suite UI remains usable and giving you full control over long-running analyses.
+
 ## How to Use
 
 1.  **Load the Extension**:
@@ -45,11 +54,12 @@ This hybrid approach, with intelligent tokenization and dual clustering strategi
     - Go to any tool in Burp, such as Intruder results or Proxy history.
     - Select one or more request/response items.
     - Right-click and select **"Send to Colonel Clustered"**.
-    - By default, a **Fast Scan** (DBSCAN) will automatically run.
+    - A **Fast Scan** will automatically begin, and a progress bar will appear to monitor the analysis.
 
 3.  **Perform Deep Analysis (Optional)**:
-    - If a more detailed, hierarchical clustering is desired, click the **"Deep Analysis"** button within the "Col. Clustered" tab.
-    - A progress bar will appear directly within the tab, allowing you to monitor the analysis without blocking the main Burp Suite UI.
+    - If a more detailed, hierarchical clustering is desired, click the **"Deep Analysis"** button.
+    - **Note**: If you are analyzing a large number of items, a warning will appear about potential performance issues before the scan begins.
+    - A progress bar will appear, allowing you to monitor the analysis.
 
 4.  **Analyze the Results in the Quad-Pane UI**:
     - The "Colonel Clustered" tab uses a powerful four-pane layout to help you quickly navigate results.
