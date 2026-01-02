@@ -73,14 +73,9 @@ To handle large datasets efficiently and prevent crashes, Colonel Clustered incl
     - **Top-Right & Bottom-Right (Viewers)**: Select any row in the table to view its full request and response in the viewers on the right.
 
 ## Screenshots
+<img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/08873dc4-7fc3-4791-989e-ae9aaabe6598" />
 
-*(Note: The screenshots below are from an older version and do not reflect the current quad-pane UI. **New screenshots are needed!**)*
-<img width="1242" height="725" alt="Screenshot 2025-12-24 8 14 13 PM" src="https://github.com/user-attachments/assets/4aaae005-2c12-4166-b186-6da76a49a3b4" />
-
-
-<img width="1172" height="879" alt="Screenshot 2025-12-24 8 11 49 PM" src="https://github.com/user-attachments/assets/54d8fda2-bc23-4956-86d2-62565c4132f9" />
-
-<img width="1168" height="871" alt="Screenshot 2025-12-24 8 12 55 PM" src="https://github.com/user-attachments/assets/04919421-f519-4a56-ac57-4cf8b87bac7c" />
+<img width="1920" height="1200" alt="image" src="https://github.com/user-attachments/assets/6cfebc8a-91dd-4a0c-980f-1b2c7dc6bbc3" />
 
 
 ## Building from Source
