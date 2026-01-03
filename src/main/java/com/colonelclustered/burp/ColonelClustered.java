@@ -219,9 +219,13 @@ class ColonelClusteredTab extends JPanel {
 
     private void showAboutDialog() {
         // ... (existing code, no changes)
+        String version = getClass().getPackage().getImplementationVersion();
+        if (version == null) {
+            version = "DEV";
+        }
         String htmlContent = "<html><body style='width: 300px; padding: 10px;'>"
             + "<h1>Colonel Clustered</h1>"
-            + "<p><b>Version:</b> 1.1.0</p>"
+            + "<p><b>Version:</b> " + version + "</p>"
             + "<p>A Burp Suite extension for clustering HTTP responses to find outliers.</p>"
             + "<hr>"
             + "<h3>Author</h3>"

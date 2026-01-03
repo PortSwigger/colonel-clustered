@@ -29,6 +29,11 @@ shadowJar {
     archiveBaseName.set('ColonelClustered')
     archiveClassifier.set('')
     archiveVersion.set('')
+    manifest {
+        attributes 'Implementation-Version': project.version
+    }
 }
 
 build.dependsOn shadowJar
+
+jar.enabled = false

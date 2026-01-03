@@ -1,4 +1,4 @@
-# Colonel Clustered
+# Colonel Clustered (v1.0.0)
 
 **A Burp Suite extension for clustering HTTP responses to find outliers.**
 
