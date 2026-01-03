@@ -40,6 +40,7 @@ These two algorithms should provide an easy way to automatically identify server
     - Go to the **Extensions** tab in Burp Suite.
     - Click **Add** and select the ColonelClustered.jar file.
     - A new tab named "Col. Clustered" should appear.
+    - Note: Hopefully I can get this into the BAPP store soon, I'll update README if it is accepted. 
 
 2.  **Send Responses for Analysis**:
     - Go to any tool in Burp, such as Intruder results or Proxy history.
