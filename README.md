@@ -2,15 +2,15 @@
 
 **A Burp Suite extension for clustering HTTP responses to find outliers.**
 
-## The Problem
+## Intro
 
-When running automated attacks with tools like Burp Intruder, you often get thousands of results. Sifting through these results can be a "needle in a haystack" problem. Traditional sorting by response length, status code, or timing can help, but it often fails to identify subtle but significant differences in the *content* of the responses. You might have hundreds of responses that are the exact same size but contain slightly different error messages, tokens, or data, which are critical to discover.
+This is a plugin I've been thinking about building for many years, simply because I'm moderately annoyed by how we analyze results of fuzzing attacks in Burp intruder. We're typically looking for changes in server responses in our fuzzing attacks. And we look for those differences by looking at status codes, response time, and response sizes. All of these are indirect measures of the content of the response. Of course as pentesters we don't have time to read the content of thousands of server to look for differences in the response content. But certainly we can have algorithms do this for us. 
 
-Colonel Clustered solves this by analyzing the entire content of every response and grouping similar ones together, allowing you to instantly spot the outliers.
+That's where this plugin comes in. It uses text clustering techniques to analyze the content of the responses and put them into clusters based on their similarity. It gives you another way to view the results of your intruder fuzzing attacks, and quickly identifying those server responses that are different. 
 
 ## How It Works
 
-Colonel Clustered now uses a high-performance, **dual-algorithm approach** to provide fast, accurate, and flexible clustering without requiring any manual tuning.
+Colonel Clustered provides two different algorithms to perform the response clustering. The default algorithm is relatively fast, with an optional deeper analysis algorithm that excels at spotting outliers, but doesn't scale well. Well, neither scales well, I would hesitate to throw 50k responses at this plugin. The faster/default algorithm is O(n^2) in complexity, whereas the deep analysis algorithm is O(n^3). So keep that in mind as you send intruder results to it to process. 
 
 1.  **Content-Aware Tokenization**: The extension first inspects the `Content-Type` header of each response to apply the most intelligent tokenization strategy:
     -   **HTML**: Strips all tags and scripts, then generates character-based 5-grams on the visible text. This includes sanitizing digits to ensure resilience to minor variations (like IDs) in templated content.
@@ -18,43 +18,34 @@ Colonel Clustered now uses a high-performance, **dual-algorithm approach** to pr
     -   **Text**: Generates character-based 5-grams on plain text content, also sanitizing digits for template resilience.
     -   **Binary/Other**: If the content is not text-based, it generates a set of 5-byte n-grams to find similarities in the binary data.
 
-2.  **High-Performance Pre-Grouping**: To remain fast even with thousands of responses, the extension performs a single pass to group all *perfectly identical* responses. It calculates a hash of each response's token set and groups all items that share the same hash. This means the expensive clustering algorithm only has to run on the much smaller set of *unique* response bodies.
+2.  **Pre-Grouping**: To remain fast even with thousands of responses, the extension performs a single pass to group all perfectly identical responses. It calculates a hash of each response's token set and groups all items that share the same hash. This means the expensive clustering algorithm only has to run on the much smaller set of unique response bodies.
 
 3.  **Dual Clustering Algorithms**: Colonel Clustered offers two distinct clustering algorithms:
 
-    *   **Fast Scan (Default)**: A high-performance `DBSCAN`-based algorithm runs automatically.
-        -   **Automatic Epsilon Tuning**: It uses the Kneedle algorithm to automatically determine the optimal `epsilon` (density radius), adapting to the dataset's characteristics.
-        -   **Outlier Detection (minPts=2)**: `minPts` is fixed at 2, making it highly effective for identifying responses that are unique or share similarity with only one other item, ensuring sensitive outlier detection.
+    *   **Fast Scan (Default)**: A high-performance DBSCAN-based algorithm runs automatically when you send multiple request/responses to the extension. 
+        -   **Automatic Epsilon Tuning**: It uses the Kneedle algorithm to automatically determine the optimal epsilon (density radius), adapting to the dataset's characteristics.
+        -   **Outlier Detection (minPts=2)**: minPts is fixed at 2, making it highly effective for identifying responses that are unique or share similarity with only one other item, ensuring sensitive outlier detection.
 
-    *   **Deep Analysis (Manual Trigger)**: The original, more computationally intensive hierarchical clustering algorithm is available via a "Deep Analysis" button. This option is designed for scenarios requiring a more granular and potentially different clustering perspective, utilizing **Average Linkage** for improved cluster cohesion.
+    *   **Deep Analysis (Manual Trigger)**: The original, more computationally intensive hierarchical clustering algorithm is available via a "Deep Analysis" button. This option is designed for scenarios requiring a more granular and potentially different clustering perspective, utilizing Average Linkage for improved cluster cohesion.
         -   It constructs a similarity matrix using Jaccard distance between unique responses.
         -   It iteratively merges the most similar clusters, recording merge distances to determine optimal thresholds.
 
 4.  **Outlier Consolidation**: After clustering, any resulting group containing only a single unique member is considered an outlier. All such outliers are then consolidated into a single, convenient "Outliers" group in the UI.
 
-This hybrid approach, with intelligent tokenization and dual clustering strategies, provides powerful and flexible outlier detection for various security testing scenarios.
-
-### Performance and Safety Features
-
-To handle large datasets efficiently and prevent crashes, Colonel Clustered includes several key optimizations:
-
-*   **Multi-Core Processing**: Both the **Fast Scan** and **Deep Analysis** algorithms are now multi-threaded, utilizing all available CPU cores to significantly speed up the analysis of large numbers of unique responses.
-*   **Memory Safeguard**: Before starting a **Deep Analysis**, the extension checks if there is sufficient memory available. If allocating the required resources would risk an `OutOfMemoryError` and crash Burp Suite, the analysis is cancelled proactively with a warning.
-*   **Interactive Warnings**: For **Deep Analysis** scans on a large number of items (>2000), a confirmation dialog will appear, warning you of the potential for slow performance and high memory usage, giving you the option to proceed or cancel.
-*   **Responsive UI**: All clustering tasks now run in the background with a progress bar and a responsive **Cancel** button, ensuring the Burp Suite UI remains usable and giving you full control over long-running analyses.
+These two algorithms should provide an easy way to automatically identify server responses that differ in content, even when the response size is an unreliable measure of response differences. 
 
 ## How to Use
 
 1.  **Load the Extension**:
     - Go to the **Extensions** tab in Burp Suite.
-    - Click **Add** and select the `ColonelClustered.jar` file.
+    - Click **Add** and select the ColonelClustered.jar file.
     - A new tab named "Col. Clustered" should appear.
 
 2.  **Send Responses for Analysis**:
     - Go to any tool in Burp, such as Intruder results or Proxy history.
     - Select one or more request/response items.
     - Right-click and select **"Send to Colonel Clustered"**.
-    - A **Fast Scan** will automatically begin, and a progress bar will appear to monitor the analysis.
+    - A default Fast Scan will automatically begin, and a progress bar will appear to monitor the analysis.
 
 3.  **Perform Deep Analysis (Optional)**:
     - If a more detailed, hierarchical clustering is desired, click the **"Deep Analysis"** button.
@@ -62,9 +53,9 @@ To handle large datasets efficiently and prevent crashes, Colonel Clustered incl
     - A progress bar will appear, allowing you to monitor the analysis.
 
 4.  **Analyze the Results in the Quad-Pane UI**:
-    - The "Colonel Clustered" tab uses a powerful four-pane layout to help you quickly navigate results.
-    - **Top-Left (Clusters)**: This pane shows a high-level list of all clusters found, including a special "Outliers" group. Each entry shows the number of items in that cluster.
-    - **Bottom-Left (Cluster Contents)**: Click on a cluster in the pane above to see all of its members displayed in this table. The table features several columns:
+    - The "Colonel Clustered" tab uses a four-pane layout to help you quickly navigate results.
+    - **Top-Left (Clusters)**: This pane shows the clusters found, including a special "Outliers" group. Each entry shows the number of items in that cluster.
+    - **Bottom-Left (Cluster members)**: Select a cluster in the pane above to see all of its members displayed in this table. The table features several columns:
         - `Request/Response Pair`: The original index of the item.
         - `Status Code`: The HTTP response status code.
         - `Length`: The length of the response body in bytes.
@@ -93,12 +84,14 @@ This project uses Gradle. You need JDK version 17 installed to build the plugin.
     ```
 3.  The compiled JAR will be located at `build/libs/ColonelClustered.jar`.
 
-## Author & Credits
+## Contact
+Drew Kirkpatrick  
+@hoodoer  
+hoodoer@bitwisemunitions.dev
 
--   **Author**: Drew Kirkpatrick
-    -   **Twitter**: @hoodoer
-    -   **Email**: hoodoer@bitwisemunitions.dev
+You can find me over at TrustedSec. 
+
 
 ## License
 
-This project is released into the public domain under the Unlicense. See the `LICENSE` file for details.
+This project is released into the public domain under the Unlicense. See the LICENSE file for details.
