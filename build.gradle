@@ -4,7 +4,7 @@ plugins {
     id "com.github.johnrengelman.shadow" version "7.1.2"
 }
 
-version = '1.0.0'
+version = '1.0.1'
 description = 'A Burp Suite extension for clustering HTTP responses to find outliers.'
 
 repositories {

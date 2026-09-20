@@ -34,12 +34,16 @@ public class ColonelClustered implements BurpExtension, ContextMenuItemsProvider
     @Override
     public void initialize(MontoyaApi api) {
         this.api = api;
-        api.extension().setName("Colonel Clustered");
+        api.extension().setName("Colonel Clustered - Response Similarity Clustering");
         api.logging().logToOutput("Colonel Clustered loaded.");
 
         colonelClusteredTab = new ColonelClusteredTab(api);
         api.userInterface().registerSuiteTab("Col. Clustered", colonelClusteredTab);
         api.userInterface().registerContextMenuItemsProvider(this);
+        api.extension().registerUnloadingHandler(() -> {
+            colonelClusteredTab.shutdown();
+            api.logging().logToOutput("Colonel Clustered unloaded.");
+        });
     }
 
     @Override
@@ -76,6 +80,7 @@ class ColonelClusteredTab extends JPanel {
     private final JProgressBar progressBar;
     private final JLabel progressStatusLabel;
     private SwingWorker<?, ?> currentWorker;
+    private volatile boolean shuttingDown = false;
 
 
     public ColonelClusteredTab(MontoyaApi api) {
@@ -206,6 +211,17 @@ class ColonelClusteredTab extends JPanel {
         add(mainPanel, BorderLayout.CENTER);
     }
 
+    void shutdown() {
+        shuttingDown = true;
+        clusteringEngine.cancel();
+        if (currentWorker != null) {
+            currentWorker.cancel(true);
+            currentWorker = null;
+        }
+        currentRequestResponses = null;
+        clusterNodeData = new HashMap<>(); // release held data without breaking listeners that may still fire during teardown
+    }
+
     private void clearResults() {
         treeModel.setRoot(new DefaultMutableTreeNode("Root"));
         tableModel.setRequestResponses(new ArrayList<>()); // Clear table
@@ -251,15 +267,34 @@ class ColonelClusteredTab extends JPanel {
     
     public void processRequestResponses(List<HttpRequestResponse> requestResponses) {
         clearResults();
-        this.currentRequestResponses = requestResponses;
+
+        // Items from proxy history may have no response (e.g. aborted or in-flight requests)
+        List<HttpRequestResponse> analyzable = new ArrayList<>();
+        for (HttpRequestResponse requestResponse : requestResponses) {
+            if (requestResponse.response() != null) {
+                analyzable.add(requestResponse);
+            }
+        }
+        int skipped = requestResponses.size() - analyzable.size();
+        if (skipped > 0) {
+            api.logging().logToOutput("Skipped " + skipped + " item(s) with no response.");
+        }
+        if (analyzable.isEmpty()) {
+            JOptionPane.showMessageDialog(mainPanel,
+                "None of the selected items have a response to analyze.",
+                "Nothing to Analyze", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        this.currentRequestResponses = analyzable;
         cardLayout.show(mainPanel, "progress");
         progressBar.setValue(0);
-        progressStatusLabel.setText("Starting fast clustering for " + requestResponses.size() + " items...");
+        progressStatusLabel.setText("Starting fast clustering for " + analyzable.size() + " items...");
 
         SwingWorker<Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>>, String> worker = new SwingWorker<>() {
             @Override
             protected Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> doInBackground() {
-                return clusteringEngine.clusterResponses(requestResponses, this::publish);
+                return clusteringEngine.clusterResponses(analyzable, this::publish);
             }
 
             @Override
@@ -285,6 +320,9 @@ class ColonelClusteredTab extends JPanel {
 
             @Override
             protected void done() {
+                if (shuttingDown) {
+                    return; // extension is unloading; skip API and UI updates
+                }
                 try {
                     Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> result = get();
                     displayResults(result);
@@ -365,6 +403,9 @@ class ColonelClusteredTab extends JPanel {
 
             @Override
             protected void done() {
+                if (shuttingDown) {
+                    return; // extension is unloading; skip API and UI updates
+                }
                 try {
                     if (!isCancelled()) {
                         Map<Integer, List<ClusteringEngine.IndexedHttpRequestResponse>> result = get();

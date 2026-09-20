@@ -1,4 +1,4 @@
-# Colonel Clustered (v1.0.0)
+# Colonel Clustered - Response Similarity Clustering (v1.0.1)
 
 **A Burp Suite extension for clustering HTTP responses to find outliers.**
 
@@ -90,7 +90,7 @@ Drew Kirkpatrick
 @hoodoer  
 hoodoer@bitwisemunitions.dev
 
-You can find me over at TrustedSec. 
+You can find me over at Blackthorne Consulting. 
 
 
 ## License
