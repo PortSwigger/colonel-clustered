@@ -1,0 +1,13 @@
+Uuid: 55ede6383ba640d3b53896b6f94488e1
+ExtensionType: 1
+Name: Colonel Clustered - Response Similarity Clustering
+RepoName: colonel-clustered
+ScreenVersion: 1.0.1
+SerialVersion: 1
+MinPlatformVersion: 12
+ProOnly: True
+Author: hoodoer
+ShortDescription: Clusters HTTP responses by content similarity to identify outliers.
+EntryPoint: ColonelClustered.jar
+BuildCommand: ./gradlew build
+SupportedProducts: Pro

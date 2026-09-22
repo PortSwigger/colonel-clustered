@@ -1,0 +1,21 @@
+<p>Colonel Clustered analyzes the content of HTTP responses and groups them into clusters based on textual or structural similarity. It is designed to surface outliers and distinct response groups from large sets of requests, such as those produced by fuzzing runs, going beyond indirect measures like status codes and response sizes.</p>
+
+<h2>Features</h2>
+<ul>
+  <li>Content-aware tokenization that adapts strategy based on the <code class=InlineCode>Content-Type</code> header, handling HTML (tag-stripped 5-grams), JSON (key path extraction), plain text (5-grams), and binary (5-byte n-grams) responses differently.</li>
+  <li>Fast Scan mode using a DBSCAN-based algorithm with automatic epsilon tuning via the Kneedle algorithm, triggered automatically when responses are submitted.</li>
+  <li>Deep Analysis mode using hierarchical clustering with average linkage and a full Jaccard distance similarity matrix, available on demand for more granular results.</li>
+  <li>Pre-grouping pass that hashes token sets to batch identical responses before clustering, reducing the computational load on the core algorithms.</li>
+  <li>Automatic outlier consolidation that collects all singleton clusters into a single dedicated Outliers group in the UI for easy review.</li>
+  <li>Digit sanitization during tokenization to prevent minor numeric variations (such as IDs) in templated responses from producing false splits between clusters.</li>
+</ul>
+
+<h2>Usage</h2>
+<ol>
+  <li>Navigate to any tool containing request/response items (such as Intruder results or Proxy history).</li>
+  <li>Select one or more items, right-click, and choose <code class=InlineCode>Send to Colonel Clustered</code>.</li>
+  <li>Switch to the <code class=InlineCode>Col. Clustered</code> tab; a Fast Scan will begin automatically and a progress bar will indicate analysis status.</li>
+  <li>Review the resulting cluster groups in the UI. Responses that did not fit any cluster are consolidated under the <code class=InlineCode>Outliers</code> group.</li>
+  <li>To run a more thorough analysis on the same dataset, click the <code class=InlineCode>Deep Analysis</code> button. Note that this algorithm scales as O(n&sup3;) and is best suited for smaller response sets.</li>
+  <li>Click any cluster group to inspect the individual responses it contains and compare their content.</li>
+</ol>
